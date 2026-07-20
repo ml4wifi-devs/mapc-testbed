@@ -1,0 +1,142 @@
+diff --git a/drivers/net/wireless/ath/ath9k/htc_drv_debug.c b/drivers/net/wireless/ath/ath9k/htc_drv_debug.c
+index 8f1b8dd..a6a93f9 100644
+--- a/drivers/net/wireless/ath/ath9k/htc_drv_debug.c
++++ b/drivers/net/wireless/ath/ath9k/htc_drv_debug.c
+@@ -1173,6 +1173,77 @@ void ath9k_htc_get_et_stats(struct ieee80211_hw *hw,
+ }
+ 
+ 
++static ssize_t write_file_cosr_gated_tx(struct file *file,
++	const char __user *user_buf, size_t count, loff_t *ppos)
++{
++	struct ath9k_htc_priv *priv = file->private_data;
++	struct wmi_cosr_gated_tx_cmd cmd;
++	struct wmi_cosr_gated_tx_resp resp;
++	uint8_t buff[17 + 64];
++	int rval, hdrlen, cmdlen;
++	s32 delta;
++
++	if (*ppos != 0) return 0;
++
++	/* input format (little-endian scalars), 17-byte fixed prefix:
++	 *   [8 target_tsf][1 rate][1 txpower][1 nframes][1 stamp_off]
++	 *   [1 station_id][2 seq][2 frame_len][802.11 header-template bytes]
++	 * The frame body (up to frame_len) is synthesized on-chip -- WMI_CMD_MAX_LEN
++	 * is 100 bytes so the full long frame cannot be shipped here. */
++	if (count < 17) {
++		printk("cosr_gated_tx: need at least 17 header bytes\n");
++		return -EINVAL;
++	}
++	if (count > sizeof(buff)) {
++		printk("cosr_gated_tx: too long (%d)\n", (int)count);
++		return -EMSGSIZE;
++	}
++	if (copy_from_user(buff, user_buf, count))
++		return -EFAULT;
++
++	hdrlen = count - 17;
++	memset(&cmd, 0, sizeof(cmd));
++	memcpy(cmd.target_tsf, buff, 8);        /* pass LE bytes through unchanged */
++	cmd.rate       = buff[8];
++	cmd.txpower    = buff[9];
++	cmd.nframes    = buff[10];
++	cmd.stamp_off  = buff[11];
++	cmd.station_id = buff[12];
++	cmd.seq[0]     = buff[13];
++	cmd.seq[1]     = buff[14];
++	cmd.frame_len  = cpu_to_be16(buff[15] | (buff[16] << 8)); /* firmware ntohs */
++	cmd.datalen    = cpu_to_be16(hdrlen);
++	memcpy(cmd.data, buff + 17, hdrlen);
++	memset(&resp, 0, sizeof(resp));
++
++	/* used bytes: struct offsetof(data) == 19 (after datalen) + header template */
++	cmdlen = 19 + hdrlen;
++
++	ath9k_htc_ps_wakeup(priv);
++	rval = ath9k_wmi_cmd(priv->wmi, WMI_COSR_GATED_TX_CMDID,
++			(u8 *)&cmd, cmdlen,
++			(u8 *)&resp, sizeof(resp), 2 * HZ);
++	ath9k_htc_ps_restore(priv);
++
++	if (unlikely(rval)) {
++		printk("ath9k_htc %s: WMI_COSR_GATED_TX_CMDID failed with %d\n", __FUNCTION__, rval);
++		return -EIO;
++	}
++
++	delta = (s32)(be32_to_cpu(resp.send_tsf) - be32_to_cpu(resp.target_lo));
++	printk("cosr_gated_tx: status=%d target_lo=%u send_tsf=%u delta_us=%d\n",
++		resp.status, be32_to_cpu(resp.target_lo), be32_to_cpu(resp.send_tsf), delta);
++
++	return count;
++}
++
++static const struct file_operations fops_cosr_gated_tx = {
++	.write = write_file_cosr_gated_tx,
++	.open = simple_open,
++	.owner = THIS_MODULE,
++	.llseek = default_llseek,
++};
++
+ int ath9k_htc_init_debug(struct ath_hw *ah)
+ {
+ 	struct ath_common *common = ath9k_hw_common(ah);
+@@ -1215,6 +1286,8 @@ int ath9k_htc_init_debug(struct ath_hw *ah)
+ 			    priv->debug.debugfs_phy, priv, &fops_fastreply_packet);
+ 	debugfs_create_file("fastreply_start", S_IRUSR | S_IWUSR,
+ 			    priv->debug.debugfs_phy, priv, &fops_fastreply_start);
++	debugfs_create_file("cosr_gated_tx", S_IRUSR | S_IWUSR,
++			    priv->debug.debugfs_phy, priv, &fops_cosr_gated_tx);
+ 	debugfs_create_file("macaddr", S_IRUSR | S_IWUSR, priv->debug.debugfs_phy,
+ 			    priv, &fops_macaddr);
+ 	debugfs_create_file("bssidmask", S_IRUSR | S_IWUSR, priv->debug.debugfs_phy,
+diff --git a/drivers/net/wireless/ath/ath9k/wmi.h b/drivers/net/wireless/ath/ath9k/wmi.h
+index cfc4178..fc73e80 100644
+--- a/drivers/net/wireless/ath/ath9k/wmi.h
++++ b/drivers/net/wireless/ath/ath9k/wmi.h
+@@ -118,6 +118,7 @@ enum wmi_cmd_id {
+ 	WMI_REACTIVEJAM_CMDID,
+ 	WMI_FASTREPLY_CMDID,
+ 	WMI_CONSTANTJAM_CMDID,
++	WMI_COSR_GATED_TX_CMDID,
+ };
+ 
+ enum wmi_event_id {
+@@ -202,6 +203,27 @@ enum FASTREPLY_TYPE {
+ 	FASTREPLY_START
+ };
+ 
++/* Firmware-gated TX (us-precision Co-SR). target_tsf is 8 raw little-endian
++ * bytes (assembled by hand on the firmware side, no endian assumption). */
++struct wmi_cosr_gated_tx_cmd {
++	u8 target_tsf[8];
++	u8 rate;         /* HAL rateCode; 0 => firmware default. HT/MCS = 0x80|mcs */
++	u8 txpower;      /* 0..63; 0 => default (63) */
++	u8 nframes;      /* A-MPDU subframes; 0/1 => single */
++	u8 stamp_off;    /* offset of the 6-byte id stamp in each subframe */
++	u8 station_id;   /* stamped */
++	u8 seq[2];       /* base seq, little-endian, stamped */
++	__be16 frame_len;/* synthesized subframe length */
++	__be16 datalen;  /* 802.11 header-template length */
++	u8 data[64];
++} __packed;
++
++struct wmi_cosr_gated_tx_resp {
++	u8 status;
++	__be32 target_lo;
++	__be32 send_tsf;
++} __packed;
++
+ struct wmi {
+ 	struct ath9k_htc_priv *drv_priv;
+ 	struct htc_target *htc;
+diff --git a/net/mac80211/debugfs_netdev.c b/net/mac80211/debugfs_netdev.c
+--- a/net/mac80211/debugfs_netdev.c
++++ b/net/mac80211/debugfs_netdev.c
+@@ -591,6 +591,7 @@ static void add_ap_files(struct ieee80211_sub_if_data *sdata)
+ 	DEBUGFS_ADD(num_sta_ps);
+ 	DEBUGFS_ADD(dtim_count);
+ 	DEBUGFS_ADD(num_buffered_multicast);
++	DEBUGFS_ADD_MODE(tsf, 0600);
+ 	DEBUGFS_ADD_MODE(tkip_mic_test, 0200);
+ }
+ 
