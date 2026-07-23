@@ -1,9 +1,9 @@
 # A Scalable Coordinated Spatial Reuse Testbed on Commodity IEEE 802.11 Hardware
 
 **Coordinated spatial reuse (Co-SR)**, an IEEE 802.11 multi-AP coordination (MAPC) scheme,
-lets neighbouring access points (APs) transmit in parallel. It required the APs to release
+lets neighbouring access points (APs) transmit in parallel. Co-SR requires the APs to release
 their frames in near-perfect alignment, ideally microsecond-accurate. Commodity Wi-Fi cannot
-schedule that from the host — the operating system and USB/bus path add milliseconds of
+schedule that from the host: the operating system and USB/bus path add milliseconds of
 non-deterministic delay after any timing decision.
 
 This testbed moves the transmit-release decision off the host and into the radio firmware. A
