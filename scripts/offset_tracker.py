@@ -23,6 +23,7 @@ The controller maps the one shared instant (in the reference clock) into AP k's 
 Usage:  python3 offset_tracker.py <monitor_iface> <ref_mac> <mac2> [mac3 ...] [--window N]
 """
 import sys
+import os
 import re
 import json
 import subprocess
@@ -34,15 +35,29 @@ if "--window" in argv:
     WINDOW = int(argv[i + 1])
     del argv[i:i + 2]
 
+# --raw PATH: multi-monitor mode. Instead of composing offsets against a reference AP
+# (which assumes this monitor hears that AP), dump the per-AP raw fits (a, b) in THIS
+# monitor's own tsft clock: ap_tsf = a + b*mon_tsft. The host (monitor_tracker.py) reads
+# every monitor's raw fits and composes the AP graph, so a monitor that hears only a
+# subset of APs still contributes its edges.
+RAW_PATH = None
+if "--raw" in argv:
+    i = argv.index("--raw")
+    RAW_PATH = argv[i + 1]
+    del argv[i:i + 2]
+
 MON_IFACE = argv[0]
-MACS = [m.lower() for m in argv[1:]]          # MACS[0] is the reference AP
+MACS = [m.lower() for m in argv[1:]]          # MACS[0] is the reference AP (composed mode)
 if len(MACS) < 1:
-    sys.exit("usage: offset_tracker.py <iface> <ref_mac> [mac2 ...] [--window N]")
+    sys.exit("usage: offset_tracker.py <iface> <ref_mac> [mac2 ...] [--window N] [--raw PATH]")
 MAC_REF = MACS[0]
 
 OFFSET_PATH = "/tmp/offset.json"
 
 
+# This file is scp'd standalone to the monitor VM and run.sh byte-verifies that one file, so it is
+# deliberately self-contained: `fit`/`write_offsets` are re-implemented here rather than imported
+# from clock_graph.py (which stays on the control host). Do not "dedupe" by importing it.
 def fit(samples):
     """Least-squares y = a + b*x over [(x, y), ...]; return (a, b) or None."""
     n = len(samples)
@@ -78,9 +93,23 @@ def write_offsets(ref_tsf, mon_tsft, fit_ref, fits):
         slope = (b_k - b_r) / b_r
         offset = (a_k - a_r) + (b_k - b_r) * (ref_tsf - a_r) / b_r
         offsets[mac] = [round(offset), round(slope, 9)]
-    with open(OFFSET_PATH, "w") as fh:
+    # write-then-rename so a concurrent reader (the controller) never catches a half-written
+    # file: rename is atomic on the same filesystem, so a read sees either the old or new JSON.
+    tmp = OFFSET_PATH + ".tmp"
+    with open(tmp, "w") as fh:
         json.dump({"ref_tsf": ref_tsf, "mon_tsft": mon_tsft, "offsets": offsets}, fh)
         fh.write("\n")
+    os.replace(tmp, OFFSET_PATH)
+
+
+def write_raw(mon_tsft, fits):
+    """--raw mode: dump this monitor's per-AP fits (a, b) in its own tsft clock, atomically."""
+    out = {m: [round(a, 3), round(b, 12)] for m, f in fits.items() if f for a, b in [f]}
+    tmp = RAW_PATH + ".tmp"
+    with open(tmp, "w") as fh:
+        json.dump({"mon_tsft": mon_tsft, "fits": out}, fh)
+        fh.write("\n")
+    os.replace(tmp, RAW_PATH)
 
 
 def main():
@@ -111,11 +140,16 @@ def main():
         hist[sa].append((tsft, beacon_tsf(first_hex.group(1))))
         hist[sa][:] = hist[sa][-WINDOW:]
 
-        fit_ref = fit(hist[MAC_REF])
-        if fit_ref and fit_ref[1] != 0:
-            fits = {mac: fit(hist[mac]) for mac in MACS}
-            ref_tsf = hist[MAC_REF][-1][1]
-            write_offsets(ref_tsf, tsft, fit_ref, fits)
+        fits = {mac: fit(hist[mac]) for mac in MACS}
+        if RAW_PATH is not None:
+            # multi-monitor: emit raw per-AP fits in this monitor's clock, no reference needed
+            if any(fits.values()):
+                write_raw(tsft, fits)
+        else:
+            fit_ref = fits.get(MAC_REF)
+            if fit_ref and fit_ref[1] != 0:
+                ref_tsf = hist[MAC_REF][-1][1]
+                write_offsets(ref_tsf, tsft, fit_ref, fits)
 
         tsft = None
         sa = None

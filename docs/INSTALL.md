@@ -30,13 +30,16 @@ git apply ../driver.diff
 ```
 Changed files:
 - `drivers/net/wireless/ath/ath9k/wmi.h` — command id + `wmi_cosr_gated_tx_cmd/resp`.
-- `drivers/net/wireless/ath/ath9k/htc_drv_debug.c` — debugfs file `cosr_gated_tx`.
+- `drivers/net/wireless/ath/ath9k/htc_drv_debug.c` — debugfs write `cosr_gated_tx` (fires the
+  gate) and read-only `cosr_beacons` (the OTA beacon tap for `sync: "beacon"`).
+- `drivers/net/wireless/ath/ath9k/htc_drv_txrx.c` — feeds each heard beacon (sender TSF + RX
+  mactime) into the `cosr_beacons` tap.
 - `net/mac80211/debugfs_netdev.c` — exposes the `tsf` debugfs file on **AP** interfaces (stock
   mac80211 only exposes it for IBSS/mesh, but the host scripts read `netdev:*/tsf` to seed the
   gate on an AP; one line, in `add_ap_files`).
 
-Stock **hostapd** is used unchanged — the APs run a 4-line generated config (see
-`scripts/bringup.sh`); no hostapd source changes are needed.
+Stock **hostapd** is used unchanged — the APs run a 4-line generated config (`run.sh up`
+writes it from `topo.json`); no hostapd source changes are needed.
 
 > **Reproducibility.** The firmware `.fw` is byte-reproducible from `firmware.diff` on a clean
 > checkout (verified md5 `0cdf25a…`). Kernel `.ko`s are not byte-reproducible (they embed build
@@ -87,15 +90,15 @@ driver autoloads and downloads the Co-SR firmware. Verify:
 ```bash
 dmesg | grep -i 'Transferred FW'    # Co-SR firmware loaded
 ```
-Then bring the card up as an AP with `scripts/bringup.sh` (see [`USAGE.md`](USAGE.md) — it
-generates the hostapd config, never hand-write one) so the per-vif debugfs nodes appear, and
+Then bring the card up as an AP with `run.sh up` (see [`USAGE.md`](USAGE.md) — it
+generates the hostapd config from `topo.json`, never hand-write one) so the per-vif debugfs nodes appear, and
 confirm driver + firmware together:
 ```bash
 sudo ls /sys/kernel/debug/ieee80211/*/ath9k_htc/cosr_gated_tx   # Co-SR driver bound
 ```
-The definitive check is a gated fire returning `status=0` (`scripts/fire_cosr.sh`), not a WMI error.
+The definitive check is a gated fire returning `status=0` (`./run.sh gate`), not a WMI error.
 
-## 3. Test rig
+## 3. Test testbed
 
 Bring up your VMs — all should be reachable over the network by IP and the modwifi image with the
 flashed firmware + driver:
@@ -106,9 +109,9 @@ flashed firmware + driver:
 - **one TSF observer** — any 802.11 card in monitor mode on the same channel as the APs, that
   hears every AP's beacons and runs the offset tracker.
 - **station (receiver) cards** — one monitor-mode card per station, on the shared channel,
-  each where a receiver would sit. Each AP is assigned a variable number of receivers;
+  each where a receiver would sit. A shot's `links` name which AP transmits to which station;
   a station counts its AP's stamped stream and reports per-location delivery and AP→station RSSI
-  (`measure_multi`, [`EXPERIMENTS.md`](EXPERIMENTS.md)).
+  (`measure`, [`EXPERIMENTS.md`](EXPERIMENTS.md)).
 
 ### Deployment model
 
@@ -128,10 +131,12 @@ Requirements:
   Other chipsets or kernels require a port, not just a rebuild.
 - **One card per node.** The debugfs path globs (`ieee80211/*/…` in `cosr_ctl.py` and the
   scripts) assume a single card per VM; a second card breaks the wildcard resolution.
-- **A common observer is required.** The APs' free-running TSFs are related
-  only through a node that hears them all — the observer timestamps every AP's beacon on its own
-  clock, and the controller maps one shared instant into each AP's TSF from those offsets. So **one
-  single observer must hear the beacons of every participating AP**.
+- **The APs' clocks must be relatable over the air.** The APs' free-running TSFs are aligned
+  through beacons on a common clock. The default `sync: "monitor"` needs **one observer that hears
+  every participating AP's beacons**; the two scaling modes drop that requirement — `beacon` (APs
+  hear each other) and multi-monitor (`monitors` list, several partial observers bridged by shared
+  APs) only need the graph to be connected to the reference AP. See
+  [`USAGE.md`](USAGE.md) §0 and [`SYNC.md`](SYNC.md).
 - **A transmitting AP must be idle on the voice (VO) queue.** Each shot drains the VO
   QCU so the gated frame is the sole descriptor at the target instant; any competing VO-class
   traffic on that AP is dropped. Use dedicated APs (no associated clients pushing traffic) during
@@ -140,8 +145,9 @@ Requirements:
   enough ahead to cover the serial trigger fan-out — roughly one ssh round-trip per AP — or a later
   AP's target lands in the past and the gate rejects it as LATE. Also, it must stay under the
   firmware's ~600 ms ceiling, which also keeps the offset tracker's linear TSF extrapolation valid.
-  The 500 ms default suits a handful of APs on a LAN.
+  The 150 ms default (`lead_us`) suits a handful of APs on a LAN; the AP writes are threaded, so it
+  need not grow with AP count.
 
-Note each AP's IP, interface name (`wlanX`), and BSSID (`iw dev <iface> info`), plus the monitor's
-IP and interface — these are the inputs to `bringup.sh`, `offset_tracker.py`, and the spec.
-root ssh is disabled on the image, so debugfs is chmod'd (by `bringup.sh`) rather than firing as root.
+Note each AP's IP, interface name (`wlanX`), and BSSID (`iw dev <iface> info`), plus each station's
+and the observer's IP and interface — these are the fields of `topo.json` (nodes, channel, password).
+root ssh is disabled on the image, so debugfs is chmod'd (by `run.sh up`) rather than firing as root.

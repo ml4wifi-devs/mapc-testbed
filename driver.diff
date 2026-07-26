@@ -1,8 +1,7 @@
 diff --git a/drivers/net/wireless/ath/ath9k/htc_drv_debug.c b/drivers/net/wireless/ath/ath9k/htc_drv_debug.c
-index 8f1b8dd..a6a93f9 100644
 --- a/drivers/net/wireless/ath/ath9k/htc_drv_debug.c
 +++ b/drivers/net/wireless/ath/ath9k/htc_drv_debug.c
-@@ -1173,6 +1173,77 @@ void ath9k_htc_get_et_stats(struct ieee80211_hw *hw,
+@@ -1173,6 +1173,133 @@ void ath9k_htc_get_et_stats(struct ieee80211_hw *hw,
  }
  
  
@@ -70,6 +69,62 @@ index 8f1b8dd..a6a93f9 100644
 +	return count;
 +}
 +
++/* Co-SR: passive log of every beacon heard (incl. foreign APs), each with the
++ * sender's TSF (t1, from the beacon body) and our RX TSF (t2, mactime) -- the raw
++ * pairs the cross-AP offset fit needs, captured in AP mode with no monitor VIF.
++ * Read-only, off the TX/gate path. */
++#define COSR_BCN_RING 64
++struct cosr_bcn_obs { u8 mac[6]; u64 t1; u64 t2; u8 rate_idx; u16 len; };
++static struct cosr_bcn_obs cosr_bcn[COSR_BCN_RING];
++static u32 cosr_bcn_head;
++static DEFINE_SPINLOCK(cosr_bcn_lock);
++
++void cosr_beacon_observe(const u8 *mac, u64 t1, u64 t2, u8 rate_idx, u16 len)
++{
++	unsigned long flags;
++	struct cosr_bcn_obs *o;
++	spin_lock_irqsave(&cosr_bcn_lock, flags);
++	o = &cosr_bcn[cosr_bcn_head & (COSR_BCN_RING - 1)];
++	memcpy(o->mac, mac, 6);
++	o->t1 = t1;
++	o->t2 = t2;
++	o->rate_idx = rate_idx;
++	o->len = len;
++	cosr_bcn_head++;
++	spin_unlock_irqrestore(&cosr_bcn_lock, flags);
++}
++
++static ssize_t read_file_cosr_beacons(struct file *file, char __user *user_buf,
++				      size_t count, loff_t *ppos)
++{
++	unsigned int size = COSR_BCN_RING * 64, len = 0;
++	unsigned long flags;
++	u32 i, h, start;
++	ssize_t rv;
++	char *buf = kzalloc(size, GFP_KERNEL);
++	if (!buf)
++		return -ENOMEM;
++	spin_lock_irqsave(&cosr_bcn_lock, flags);
++	h = cosr_bcn_head;
++	start = (h > COSR_BCN_RING) ? h - COSR_BCN_RING : 0;
++	for (i = start; i < h && len < size - 64; i++) {
++		struct cosr_bcn_obs *o = &cosr_bcn[i & (COSR_BCN_RING - 1)];
++		len += scnprintf(buf + len, size - len, "%pM %llu %llu %u %u\n",
++				 o->mac, o->t1, o->t2, o->rate_idx, o->len);
++	}
++	spin_unlock_irqrestore(&cosr_bcn_lock, flags);
++	rv = simple_read_from_buffer(user_buf, count, ppos, buf, len);
++	kfree(buf);
++	return rv;
++}
++
++static const struct file_operations fops_cosr_beacons = {
++	.read = read_file_cosr_beacons,
++	.open = simple_open,
++	.owner = THIS_MODULE,
++	.llseek = default_llseek,
++};
++
 +static const struct file_operations fops_cosr_gated_tx = {
 +	.write = write_file_cosr_gated_tx,
 +	.open = simple_open,
@@ -80,17 +135,45 @@ index 8f1b8dd..a6a93f9 100644
  int ath9k_htc_init_debug(struct ath_hw *ah)
  {
  	struct ath_common *common = ath9k_hw_common(ah);
-@@ -1215,6 +1286,8 @@ int ath9k_htc_init_debug(struct ath_hw *ah)
+@@ -1215,6 +1342,10 @@ int ath9k_htc_init_debug(struct ath_hw *ah)
  			    priv->debug.debugfs_phy, priv, &fops_fastreply_packet);
  	debugfs_create_file("fastreply_start", S_IRUSR | S_IWUSR,
  			    priv->debug.debugfs_phy, priv, &fops_fastreply_start);
 +	debugfs_create_file("cosr_gated_tx", S_IRUSR | S_IWUSR,
 +			    priv->debug.debugfs_phy, priv, &fops_cosr_gated_tx);
++	debugfs_create_file("cosr_beacons", S_IRUSR,
++			    priv->debug.debugfs_phy, priv, &fops_cosr_beacons);
  	debugfs_create_file("macaddr", S_IRUSR | S_IWUSR, priv->debug.debugfs_phy,
  			    priv, &fops_macaddr);
  	debugfs_create_file("bssidmask", S_IRUSR | S_IWUSR, priv->debug.debugfs_phy,
+diff --git a/drivers/net/wireless/ath/ath9k/htc_drv_txrx.c b/drivers/net/wireless/ath/ath9k/htc_drv_txrx.c
+--- a/drivers/net/wireless/ath/ath9k/htc_drv_txrx.c
++++ b/drivers/net/wireless/ath/ath9k/htc_drv_txrx.c
+@@ -15,6 +15,9 @@
+  */
+ 
+ #include "htc.h"
++#include <asm/unaligned.h>
++
++void cosr_beacon_observe(const u8 *mac, u64 t1, u64 t2, u8 rate_idx, u16 len);
+ 
+ /******/
+ /* TX */
+@@ -1043,6 +1046,13 @@ static bool ath9k_rx_prepare(struct ath9k_htc_priv *priv,
+ 	rx_status->band = ah->curchan->chan->band;
+ 	rx_status->freq = ah->curchan->chan->center_freq;
+ 	rx_status->antenna = rx_stats.rs_antenna;
++	if (ieee80211_is_beacon(hdr->frame_control) && skb->len >= 24 + 8)
++		cosr_beacon_observe(hdr->addr2,
++				    get_unaligned_le64((u8 *)hdr + 24),
++				    rx_status->mactime,
++				    rx_status->rate_idx,
++				    skb->len - HTC_RX_FRAME_HEADER_SIZE);
++
+ 	rx_status->flag |= RX_FLAG_MACTIME_END;
+ 
+ 	return true;
 diff --git a/drivers/net/wireless/ath/ath9k/wmi.h b/drivers/net/wireless/ath/ath9k/wmi.h
-index cfc4178..fc73e80 100644
 --- a/drivers/net/wireless/ath/ath9k/wmi.h
 +++ b/drivers/net/wireless/ath/ath9k/wmi.h
 @@ -118,6 +118,7 @@ enum wmi_cmd_id {

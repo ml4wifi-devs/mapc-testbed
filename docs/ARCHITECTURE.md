@@ -34,40 +34,42 @@ carries a unique id stamp.
        ├── GATE: busy-poll on-chip TSF  (coarse IRQ-on → fine IRQ-off, CS-off, backoff=0)
        └── at target TSF:  ath_tgt_txqaddbuf(VO queue)  ── RF emission ──►
                    ▼
-   MONITOR VM   tcpdump → cosr_shot.pcap
+   STATION VMs  tcpdump → one pcap per station
                    ▼
-   cosr_ctl.parse_frames()  → count unique (station_id, seq, idx) stamps
+   cosr_ctl.parse_frames()  → count unique (sa, station_id, seq, idx) stamps
                    ▼
-   result dict: per-AP (or per-(AP,station)) delivery, cross-AP sync_error, rssi
+   result dict: per-(AP→station) delivery, per-AP sync (test-sync), rssi
 ```
 
 ## Stage 1 — Host controller (`scripts/cosr_ctl.py`)
 
-`cosr_shot(spec)` is the single-observer entry point; `measure()` wraps it for the model interface
-and dispatches to `measure_multi()` when APs carry `stations` (per-(AP,station) matrices, any number
-of APs). The shared timing loop `_do_shots()` is the one proven fire path, reused by both.
-Responsibilities by helper:
+`load(topo, shot)` resolves the two config files into a fire plan (link names → nodes, validated);
+`shot()`, `measure()`, and `test_sync()` are the three entry points, each taking that plan. They
+share one proven fire path, `_do_shots()`. Responsibilities by helper:
 
 | function | responsibility |
 |---|---|
-| `cosr_shot()` | orchestrate a single-observer shot: start capture → `_do_shots` → parse → result |
-| `measure_multi()` | any-N-AP, variable-stations-per-AP: capture per station node → per-(AP,station) matrices |
-| `_do_shots()` | the timing-critical fire loop shared by every capture topology |
+| `load()` | resolve `topo.json` + `shot.json` → validated fire plan (channel, observer, aps, links) |
+| `shot()` | fire + per-link delivery (counted at each link's target station) |
+| `measure()` | shot + model inputs: per-link delivery, AP→station + AP↔AP RSSI, MCS check |
+| `test_sync()` | fire staggered shots → per-AP emission-time error (bias/jitter/median/p90) |
+| `_do_shots()` | the timing-critical fire loop shared by every command |
 | `read_tsf(ip)` | read an AP's TSF (debugfs `netdev:*/tsf`); the reference AP's is the timing base |
 | `_read_offsets()` | read JSON `/tmp/offset.json` → per-AP `(offset, slope)` (retries on transient empty) |
-| `blob()` | build the WMI wire — the 17-byte LE prefix + 24-byte 802.11 header template |
+| `status_counts()` | parse `cosr_gated_tx: status=` from dmesg → {fired,late,toofar,nobf} (the delivery denominator) |
+| `blob()` | build the WMI wire — the LE prefix + 24-byte 802.11 header template |
 | `write_node()` | ssh `printf '\xNN..' > cosr_gated_tx` — the actual per-AP trigger |
 | `set_txpower()` | set TX power via `iw` (the WMI `txpower` byte is ignored by AR9271) |
-| `cap_start` / `cap_pull` | start / retrieve the monitor capture on the monitor VM |
-| `parse_frames()` | tshark full-hex → every `C0 5A` stamp = `{sa, tsft, station_id, seq, idx}` |
-| `rssi_at_monitor()` | mean radiotap signal (dBm) per AP MAC, from beacons |
+| `cap_start` / `cap_pull` | start / retrieve the monitor capture on each station VM |
+| `parse_frames()` | tshark full-hex → every `C0 5A` stamp = `{sa, tsft, signal, station_id, seq, idx}` |
 
 **Timing-critical path (per shot):** `read_tsf(reference)` → `Tm = now + lead` → per AP compute its
 target → fire every AP's `write_node` **in parallel threads**. Threading matters: serial writes
 add ~1 ssh RTT per AP, which for a follower pushes its target into the past (LATE). Everything
-non-critical — `set_txpower`, capture start, offset refresh (every 10 shots) — is kept out of
-this path. The offset is cached and drift-extrapolated to the fire instant rather than re-read
-per shot.
+non-critical — `set_txpower`, capture start, the per-shot offset re-read — is kept out of it: the
+offset read sits before the shot's TSF read, never between it and the fan-out, so it costs one
+cheap multiplexed ssh and keeps the offset current (a stale offset only grows the
+`slope*(now-offset_ts)` extrapolation error).
 
 ## Stage 2 — Driver (`driver.diff`: `htc_drv_debug.c`, `wmi.h`, `mac80211/debugfs_netdev.c`)
 
@@ -151,13 +153,16 @@ clock).
 Parsed with tshark full-hex: tcpdump `-x` mis-dissects the `C0 5A` stamp as an LLC header
 and drops it. Per frame, find `c05a`, extract `(station_id, seq, idx)` plus `sa` and `tsft`.
 Delivery = number of unique `(sa, station_id, seq, idx)`; duplicates counted separately. This
-is robust under Co-SR collisions — a lost frame is simply an absent id, not a miscount.
-
----
+holds up under Co-SR collisions — a lost frame is simply an absent id, not a miscount.
 
 ## Timing subsystem — cross-AP clock alignment
 
 This is why AP mode is required. It runs continuously, entirely off the fire critical path.
+
+The single-observer tracker below is the default. Two scaling modes (selected by `sync` in
+`topo.json`) drop the requirement that one node hears every AP — APs hearing each other via a driver
+tap, or several monitors bridged by common APs — both composing the same `offset.json` on the
+control host. See [`SYNC.md`](SYNC.md); the rest of this pipeline is unchanged.
 
 **`scripts/offset_tracker.py`** (runs on the TSF observer — any monitor-mode card, dedicated or a
 station card, that hears every AP's beacons):
@@ -193,20 +198,17 @@ hostapd's BSS provides — pure monitor injection has no such context and the bu
 also beacons but merges TSF (nodes adopt the max), which fights the free-running independent-
 clock model; AP mode gives each AP its own free clock.
 
----
-
 ## Diagnostics (not in the pipeline)
 
-- **`scripts/skew.py`** — two-AP cross-AP sync error from any capture: pairs the two APs by the
-  seq in the stamp, reports `(tsft_follower − tsft_reference) − stagger` (median/mean/max/std). This is
-  the relative number.
-- **`scripts/fire_cosr.sh` + `scripts/gate_check.py`** — single-AP absolute gate precision:
-  `fire_cosr.sh` fires N gated frames and logs `seq commanded_T`; `gate_check.py` pairs each with
-  the monitor `tsft`, detrends the constant offset + slow drift between the two clock domains, and
-  flags residual excursions (a late fire spikes off the ramp). This is the direct evidence for the
-  headline single-AP precision.
-
----
+- **`run.sh test-sync`** (`test_sync()` in `cosr_ctl.py`) — cross-AP sync error over many shots:
+  the observer pairs each AP's first subframe (`idx==0`) by seq against the reference and reports
+  per-AP `(tsft_ap − tsft_reference) − stagger` as signed bias / jitter / median / p90-abs. This is the relative number.
+- **`run.sh gate`** (`gate()` in `cosr_ctl.py`) — single-AP absolute gate precision: fires the
+  first link's AP alone, pairs each frame's monitor `tsft` with its own commanded target (recorded
+  by `_do_shots` and returned as `commanded`), detrends the constant offset + slow drift between the
+  two clock domains, and flags residual excursions (a late fire spikes off the ramp). This is the
+  direct evidence for the headline single-AP precision. It reuses the same `blob()` wire and
+  `parse_frames()` parser as every other command — no second wire format, no separate script.
 
 ## Wire format (host ↔ driver ↔ firmware)
 
@@ -232,14 +234,13 @@ unique `(station_id, seq, subframe_idx)`.
 Response status codes (`enum COSR_GATED_TX_STATUS`): `0` FIRED, `1` NOBF (no tx buf), `2` LATE
 (command arrived after target), `3` TOOFAR (> 600 ms ahead).
 
----
-
 ## Where to change things
 
 | you want to… | change |
 |---|---|
-| add/adjust a shot's rate, power, size, stagger, lead | `spec.json` fields consumed by `cosr_ctl.py` |
-| change how the shared instant maps to each AP | `cosr_shot()` target formula + `offset_tracker.py` |
+| add/adjust a shot's rate, power, size, stagger, lead | `shot.json` fields (via `load()`) |
+| add/rename a node or change the channel/observer | `topo.json` (resolved by `load()`) |
+| change how the shared instant maps to each AP | `_map_target()` formula + `offset_tracker.py` |
 | change the gate timing / CS / IRQ behaviour | `ath_cosr_gated_tx()` in `if_ath.c` (rebuild + reflash) |
 | change frame synthesis / stamp / no-retx | `cosr_build_frame()` in `attacks.c` (rebuild + reflash) |
 | change A-MPDU layout | `cosr_build_ampdu()` in `if_owl.c` (rebuild + reflash) |
