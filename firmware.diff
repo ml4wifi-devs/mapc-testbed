@@ -1,8 +1,8 @@
 diff --git a/target_firmware/wlan/attacks.c b/target_firmware/wlan/attacks.c
-index 26581c1..d4c2ea9 100644
+index 26581c1..961c5bf 100644
 --- a/target_firmware/wlan/attacks.c
 +++ b/target_firmware/wlan/attacks.c
-@@ -244,6 +244,130 @@ fail:
+@@ -244,6 +244,137 @@ fail:
  }
  
  
@@ -48,8 +48,15 @@ index 26581c1..d4c2ea9 100644
 +	adf_os_assert(sc->sc_currates != NULL);
 +	rt = sc->sc_currates;
 +	if (rate) {
++		/* The index and the rate code must describe the same rate: the index is what
++		 * ath_buf_set_rate uses to compute the aggregate's duration, and the code is
++		 * what goes into the descriptor. Falling back to the minimum rate for one and
++		 * keeping the unknown code for the other builds a frame whose signalled
++		 * duration does not match how it is sent. Refuse instead. */
 +		a_int32_t rix = cosr_rix_for_ratecode(rt, rate);
-+		rcs[0].rix = (rix >= 0) ? rix : ath_get_minrateidx(sc, &sc->sc_vap[0]);
++		if (rix < 0)
++			return NULL;
++		rcs[0].rix = rix;
 +	} else {
 +		rcs[0].rix = ath_get_minrateidx(sc, &sc->sc_vap[0]);
 +	}
@@ -159,7 +166,7 @@ index e651688..21049c3 100644
  // Attack implementations
  int attack_reactivejam(struct ath_softc_tgt *sc, unsigned char source[6],
 diff --git a/target_firmware/wlan/if_ath.c b/target_firmware/wlan/if_ath.c
-index 732cb33..c9b9c6e 100755
+index 732cb33..f825170 100755
 --- a/target_firmware/wlan/if_ath.c
 +++ b/target_firmware/wlan/if_ath.c
 @@ -59,6 +59,8 @@
@@ -171,7 +178,7 @@ index 732cb33..c9b9c6e 100755
  
  static a_int32_t ath_numrxbufs = -1;
  static a_int32_t ath_numrxdescs = -1;
-@@ -1913,6 +1915,150 @@ static void ath_constantjam(void *Context, A_UINT16 Command,
+@@ -1913,6 +1915,217 @@ static void ath_constantjam(void *Context, A_UINT16 Command,
  	wmi_cmd_rsp(sc->tgt_wmi_handle, Command, SeqNo, &cmd_resp, sizeof(cmd_resp));
  }
  
@@ -188,9 +195,38 @@ index 732cb33..c9b9c6e 100755
 + */
 +#define COSR_LEAD_MAX_US   600000   /* reject targets more than 600 ms ahead */
 +#define COSR_FINE_US       2000     /* final approach spun with IRQ off; coarse wait keeps IRQ on */
++/* Bounds on the gate's spins, so a clock that stops cannot hang the target. Each pass reads the
++ * clock, so these are far above what the longest legal wait (COSR_LEAD_MAX_US) needs and are
++ * reached only when the clock is no longer advancing. */
++#define COSR_SPIN_MAX       400000000u
++#define COSR_DRAIN_SPIN_MAX  40000000u
 +
 +extern void ath_tgt_txqaddbuf(struct ath_softc_tgt *sc, struct ath_txq *txq,
 +			      struct ath_tx_buf *bf, struct ath_tx_desc *lastds);
++
++/* Spin until the on-chip clock reaches `deadline`. 0 on arrival, -1 if the clock stopped
++ * advancing or moved backwards.
++ *
++ * An unbounded spin here is not a slow path, it is a dead target: two of the callers run with
++ * interrupts disabled, so USB stops being serviced and the device leaves the bus until it is
++ * physically re-attached. A MAC reset or a restart of the BSS moves the clock backwards, which
++ * makes the deadline unreachable, so the wait has to be able to give up. */
++static int cosr_wait_tsf(struct ath_hal *ah, a_uint64_t deadline)
++{
++	a_uint64_t now, prev;
++	a_uint32_t spins;
++
++	prev = ah->ah_getTsf64(ah);
++	spins = 0;
++	while ((now = ah->ah_getTsf64(ah)) < deadline) {
++		if (now < prev)
++			return -1;              /* the clock was reset under us */
++		if (++spins > COSR_SPIN_MAX)
++			return -1;              /* it is no longer advancing */
++		prev = now;
++	}
++	return 0;
++}
 +
 +static void ath_cosr_gated_tx(void *Context, A_UINT16 Command,
 +			      A_UINT16 SeqNo, A_UINT8 *buffer, a_int32_t Length)
@@ -199,11 +235,12 @@ index 732cb33..c9b9c6e 100755
 +	struct ath_hal *ah = sc->sc_ah;
 +	WMI_COSR_GATED_TX_CMD *cmd = (WMI_COSR_GATED_TX_CMD *)buffer;
 +	WMI_COSR_GATED_TX_RESP resp;
-+	struct ath_tx_buf *bf;
++	struct ath_tx_buf *bf = NULL;
 +	a_uint64_t target, now;
 +	a_uint16_t datalen, frame_len;
 +	a_uint32_t lo, hi;
 +	a_uint32_t saved_diag, saved_ifs[HAL_NUM_TX_QUEUES];
++	a_uint32_t spins;
 +	int q;
 +	union { a_uint64_t u64; a_uint32_t u32[2]; } t;
 +	/* Fire on the VO (voice) QCU, not BE: highest DCU priority (wins medium
@@ -276,14 +313,25 @@ index 732cb33..c9b9c6e 100755
 +	ah->ah_stopTxDma(ah, txq->axq_qnum);
 +	ath_tx_draintxq(sc, txq);
 +
++	/* Draining can block for up to a frame's airtime, so the instant checked at entry may
++	 * already have passed by now. Without re-reading, cosr_wait_tsf returns immediately, the
++	 * frame goes out late, and the status still says it made its instant -- which is the one
++	 * thing every timing figure downstream relies on. */
++	if (target != 0 && ah->ah_getTsf64(ah) >= target) {
++		resp.status = COSR_GTX_LATE;
++		goto drop;
++	}
++
 +	/* on-chip busy-poll gate (skipped when ungated). Two phases so a large lead
 +	 * (hundreds of ms) is cheap: a coarse wait with interrupts ON (beacons keep
 +	 * flowing, HTC/USB keeps being serviced), then a short final approach with
 +	 * interrupts OFF so no ISR can delay the exit and fire the frame late. */
 +	if (target != 0) {
 +		/* coarse wait, interrupts ON, up to COSR_FINE_US before the target */
-+		while (ah->ah_getTsf64(ah) + COSR_FINE_US < target)
-+			;
++		if (cosr_wait_tsf(ah, target - COSR_FINE_US) != 0) {
++			resp.status = COSR_GTX_CLKLOST;
++			goto drop;
++		}
 +		ah->ah_setInterrupts(sc->sc_ah, 0);
 +		/* Remove medium-access delay so the frame emits at the gated instant:
 +		 * ignore carrier sense and zero the DCU backoff (this is also required
@@ -295,25 +343,51 @@ index 732cb33..c9b9c6e 100755
 +			saved_ifs[q] = ioread32_mac(AR_DLCL_IFS(q));
 +			iowrite32_mac(AR_DLCL_IFS(q), 0);
 +		}
-+		while (ah->ah_getTsf64(ah) < target)
-+			;
++		if (cosr_wait_tsf(ah, target) != 0) {
++			iowrite32_mac(AR_DIAG_SW, saved_diag);
++			for (q = 0; q < HAL_NUM_TX_QUEUES; q++)
++				iowrite32_mac(AR_DLCL_IFS(q), saved_ifs[q]);
++			ah->ah_setInterrupts(sc->sc_ah, sc->sc_imask);
++			resp.status = COSR_GTX_CLKLOST;
++			goto drop;
++		}
 +	}
 +
 +	/* transmit via the AP's real data-TX path (proven to emit in AP mode); the
 +	 * queue was just drained, so txqaddbuf does setTxDP(ours)+startTxDma -- our
 +	 * frame is the only descriptor, fired deterministically at the target. */
 +	ath_tgt_txqaddbuf(sc, txq, bf, bf->bf_lastds);
++	/* The queue owns it now and its completion will return it to the pool, so the abort path
++	 * below must not also free it. */
++	bf = NULL;
 +
 +	if (target != 0) {
-+		/* let the frame key and drain (>= its airtime) before restoring the
-+		 * carrier-sense/backoff config, so the restore cannot defer it */
-+		while (ah->ah_getTsf64(ah) < target + 300)
-+			;
++		/* Hold the relaxed medium-access configuration until the frame has actually
++		 * left: restoring it while the PHY is still keying could defer the rest of it.
++		 * The queue reports when it has drained, which is exact. A fixed delay was not --
++		 * an aggregate at a low rate is milliseconds of airtime, so a short constant
++		 * restored the configuration mid-transmission. */
++		spins = 0;
++		while (ah->ah_numTxPending(ah, txq->axq_qnum) != 0) {
++			if (++spins > COSR_DRAIN_SPIN_MAX) {
++				/* Restoring now is exactly what the wait exists to avoid, but
++				 * holding carrier sense off indefinitely is worse. Say so, so the
++				 * shot is not counted as a clean one. */
++				resp.status = COSR_GTX_DRAIN;
++				break;
++			}
++		}
 +		iowrite32_mac(AR_DIAG_SW, saved_diag);
 +		for (q = 0; q < HAL_NUM_TX_QUEUES; q++)
 +			iowrite32_mac(AR_DLCL_IFS(q), saved_ifs[q]);
 +		ah->ah_setInterrupts(sc->sc_ah, sc->sc_imask);
 +	}
++
++drop:
++	/* Built but never handed to the queue, so no completion will ever run: return it here or
++	 * the pool is exhausted after a handful of aborted shots. */
++	if (bf != NULL && bf->bf_comp != NULL)
++		bf->bf_comp(sc, bf);
 +
 +out:
 +	wmi_cmd_rsp(sc->tgt_wmi_handle, Command, SeqNo, &resp, sizeof(resp));
@@ -322,7 +396,7 @@ index 732cb33..c9b9c6e 100755
  static WMI_DISPATCH_ENTRY Magpie_Sys_DispatchEntries[] =
  {
  	{handle_echo_command,         WMI_ECHO_CMDID,               0},
-@@ -1953,6 +2099,7 @@ static WMI_DISPATCH_ENTRY Magpie_Sys_DispatchEntries[] =
+@@ -1953,6 +2166,7 @@ static WMI_DISPATCH_ENTRY Magpie_Sys_DispatchEntries[] =
  	{ath_reactivejam,             WMI_REACTIVEJAM_CMDID,        0},
  	{ath_fastreply,               WMI_FASTREPLY_CMDID,          0},
  	{ath_constantjam,             WMI_CONSTANTJAM_CMDID,        0},
@@ -449,7 +523,7 @@ index 52381c1..8c288e5 100755
  {
  	int index, cindex;
 diff --git a/target_firmware/wlan/include/wmi.h b/target_firmware/wlan/include/wmi.h
-index 690c115..95a0651 100755
+index 690c115..7b04d04 100755
 --- a/target_firmware/wlan/include/wmi.h
 +++ b/target_firmware/wlan/include/wmi.h
 @@ -169,6 +169,7 @@ typedef enum {
@@ -460,7 +534,7 @@ index 690c115..95a0651 100755
  } WMI_COMMAND_ID;
  
  
-@@ -342,6 +343,51 @@ enum FASTREPLY_TYPE {
+@@ -342,6 +343,55 @@ enum FASTREPLY_TYPE {
  	FASTREPLY_START
  };
  
@@ -498,6 +572,10 @@ index 690c115..95a0651 100755
 +	COSR_GTX_NOBF  = 1,   /* attack_build_packet failed (no tx buf / node) */
 +	COSR_GTX_LATE  = 2,   /* command arrived after target: not fired */
 +	COSR_GTX_TOOFAR = 3,  /* target too far ahead (> LEAD_MAX): not fired */
++	COSR_GTX_CLKLOST = 4, /* the on-chip clock stopped or was reset while waiting */
++	COSR_GTX_DRAIN = 5,   /* fired, but the queue never reported draining: the medium-access
++			       * configuration was restored while the frame may still have been
++			       * transmitting, so this shot is not trustworthy */
 +};
 +
 +typedef PREPACK struct {

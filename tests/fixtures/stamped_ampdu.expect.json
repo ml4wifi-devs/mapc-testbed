@@ -1,0 +1,156 @@
+{
+ "source": "fixB.pcap",
+ "select": "stamped",
+ "frames": [
+  {
+   "frame": 1,
+   "radiotap_len": 24,
+   "mactime": 3054881635,
+   "signal_dbm": 0,
+   "freq_mhz": 2412,
+   "fc_type": 2,
+   "fc_subtype": 0,
+   "sa": "24:ec:99:95:22:2f"
+  },
+  {
+   "frame": 2,
+   "radiotap_len": 24,
+   "mactime": 3054881635,
+   "signal_dbm": 0,
+   "freq_mhz": 2412,
+   "fc_type": 2,
+   "fc_subtype": 0,
+   "sa": "24:ec:99:95:22:2f"
+  },
+  {
+   "frame": 3,
+   "radiotap_len": 24,
+   "mactime": 3054881635,
+   "signal_dbm": 0,
+   "freq_mhz": 2412,
+   "fc_type": 2,
+   "fc_subtype": 0,
+   "sa": "24:ec:99:95:22:2f"
+  },
+  {
+   "frame": 4,
+   "radiotap_len": 24,
+   "mactime": 3054881635,
+   "signal_dbm": 0,
+   "freq_mhz": 2412,
+   "fc_type": 2,
+   "fc_subtype": 0,
+   "sa": "24:ec:99:95:22:2f"
+  },
+  {
+   "frame": 5,
+   "radiotap_len": 24,
+   "mactime": 3054881635,
+   "signal_dbm": -56,
+   "freq_mhz": 2412,
+   "fc_type": 2,
+   "fc_subtype": 0,
+   "sa": "24:ec:99:95:22:2f"
+  },
+  {
+   "frame": 6,
+   "radiotap_len": 24,
+   "mactime": 3055439617,
+   "signal_dbm": 0,
+   "freq_mhz": 2412,
+   "fc_type": 2,
+   "fc_subtype": 0,
+   "sa": "24:ec:99:95:22:2f"
+  },
+  {
+   "frame": 7,
+   "radiotap_len": 24,
+   "mactime": 3055439617,
+   "signal_dbm": 0,
+   "freq_mhz": 2412,
+   "fc_type": 2,
+   "fc_subtype": 0,
+   "sa": "24:ec:99:95:22:2f"
+  },
+  {
+   "frame": 8,
+   "radiotap_len": 24,
+   "mactime": 3055439617,
+   "signal_dbm": 0,
+   "freq_mhz": 2412,
+   "fc_type": 2,
+   "fc_subtype": 0,
+   "sa": "24:ec:99:95:22:2f"
+  },
+  {
+   "frame": 9,
+   "radiotap_len": 24,
+   "mactime": 3055439617,
+   "signal_dbm": 0,
+   "freq_mhz": 2412,
+   "fc_type": 2,
+   "fc_subtype": 0,
+   "sa": "24:ec:99:95:22:2f"
+  },
+  {
+   "frame": 10,
+   "radiotap_len": 24,
+   "mactime": 3055439617,
+   "signal_dbm": -56,
+   "freq_mhz": 2412,
+   "fc_type": 2,
+   "fc_subtype": 0,
+   "sa": "24:ec:99:95:22:2f"
+  },
+  {
+   "frame": 11,
+   "radiotap_len": 24,
+   "mactime": 3055705489,
+   "signal_dbm": 0,
+   "freq_mhz": 2412,
+   "fc_type": 2,
+   "fc_subtype": 0,
+   "sa": "24:ec:99:95:22:2f"
+  },
+  {
+   "frame": 12,
+   "radiotap_len": 24,
+   "mactime": 3055705489,
+   "signal_dbm": 0,
+   "freq_mhz": 2412,
+   "fc_type": 2,
+   "fc_subtype": 0,
+   "sa": "24:ec:99:95:22:2f"
+  },
+  {
+   "frame": 13,
+   "radiotap_len": 24,
+   "mactime": 3055705489,
+   "signal_dbm": 0,
+   "freq_mhz": 2412,
+   "fc_type": 2,
+   "fc_subtype": 0,
+   "sa": "24:ec:99:95:22:2f"
+  },
+  {
+   "frame": 14,
+   "radiotap_len": 24,
+   "mactime": 3055705489,
+   "signal_dbm": 0,
+   "freq_mhz": 2412,
+   "fc_type": 2,
+   "fc_subtype": 0,
+   "sa": "24:ec:99:95:22:2f"
+  },
+  {
+   "frame": 15,
+   "radiotap_len": 24,
+   "mactime": 3055705489,
+   "signal_dbm": -56,
+   "freq_mhz": 2412,
+   "fc_type": 2,
+   "fc_subtype": 0,
+   "sa": "24:ec:99:95:22:2f"
+  }
+ ]
+}

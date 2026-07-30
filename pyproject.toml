@@ -1,0 +1,27 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "cosr"
+version = "1.0.0"
+description = "A Scalable Coordinated Spatial Reuse Testbed on Commodity IEEE 802.11 Hardware"
+readme = "README.md"
+requires-python = ">=3.6"
+license = {file = "LICENSE"}
+classifiers = [
+    "Intended Audience :: Science/Research",
+    "Topic :: System :: Networking",
+    "Programming Language :: Python :: 3",
+]
+
+dependencies = []
+
+[project.scripts]
+cosr = "cosr.cli:main"
+
+[project.urls]
+Repository = "https://github.com/mwojnar/cosr"
+
+[tool.setuptools]
+packages = ["cosr"]

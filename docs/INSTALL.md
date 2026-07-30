@@ -1,27 +1,42 @@
 # Installation
 
-Everything here runs on a virtual machine (VM): a fresh [modwifi](https://github.com/vanhoefm/modwifi)
-image with one AR9271 USB dongle plugged in. The deliverables are two patches (`firmware.diff`, 
-`driver.diff`) applied to the modwifi upstreams. Both diffs come from the trees used to build the 
-validated firmware/driver. See [`ARCHITECTURE.md`](ARCHITECTURE.md) for how the pieces fit together.
+The deliverables are two patches, `firmware.diff` and `driver.diff`, applied to the
+[modwifi](https://github.com/vanhoefm/modwifi) upstreams, plus a small controller and node
+program in `cosr/`. See [`ARCHITECTURE.md`](ARCHITECTURE.md) for how the pieces fit together.
+
+## 0. Hardware you need
+
+The transmit side is not hardware-agnostic; the receive side very nearly is.
+
+| Role | Requirement |
+|---|---|
+| **AP (transmitter)** | **AR9271 only** (`ath9k_htc`). The gate is patched open-source AR9271 firmware, so another chipset needs a port, not a rebuild. One card per node. |
+| **Station (delivery counting)** | **Any** card that supports monitor mode and whose radiotap carries `dbm_antsignal`. This is the common case. |
+| **Station (`monitor` clock source)** | Additionally needs radiotap **TSFT**. Widely available. |
+| **Station (coincidence measurement)** | Needs radiotap **TSFT**, and its stamping has to be steady enough to resolve the effect being measured. This is not a property you have to know in advance: it is measured, and `doctor` reports it every run. See [`SYNC.md`](SYNC.md), "Can this receiver time anything?". |
+| **Controller** | Any POSIX host with `python3` (3.6+), `ssh`, `sshpass`, and `nats-server`. Nothing else: no packet-capture tooling and no libraries beyond the standard library. |
+| **Nodes** | `python3` (3.4+), `iw`, `hostapd` on the APs. Nothing is installed by this project; the node program is plain source and uses only the standard library. |
+
+At least one AP and one station are needed to measure delivery. Measuring how closely
+transmitters coincide needs at least two APs and one timing-capable receiver.
 
 ## 1. What the diffs change
 
-**Firmware** — `vanhoefm/modwifi-ath9k-htc` (base `781b8da`):
+**Firmware**: `vanhoefm/modwifi-ath9k-htc` (base `781b8da`):
 ```bash
 git clone https://github.com/vanhoefm/modwifi-ath9k-htc.git
 git -C modwifi-ath9k-htc checkout 781b8da
 git -C modwifi-ath9k-htc apply firmware.diff
 ```
 Changed files:
-- `target_firmware/wlan/include/wmi.h` — command id + `WMI_COSR_GATED_TX_CMD/RESP`.
-- `target_firmware/wlan/if_ath.c` — the `ath_cosr_gated_tx` gate handler + dispatch entry.
-- `target_firmware/wlan/attacks.c` — `cosr_build_frame`: on-chip subframe synthesis + id stamp.
-- `target_firmware/wlan/if_owl.c` — `cosr_build_ampdu`/`cosr_free_ampdu`: hand-built HT A-MPDU;
+- `target_firmware/wlan/include/wmi.h`: command id + `WMI_COSR_GATED_TX_CMD/RESP`.
+- `target_firmware/wlan/if_ath.c`: the `ath_cosr_gated_tx` gate handler + dispatch entry.
+- `target_firmware/wlan/attacks.c`: `cosr_build_frame`: on-chip subframe synthesis + id stamp.
+- `target_firmware/wlan/if_owl.c`: `cosr_build_ampdu`/`cosr_free_ampdu`: hand-built HT A-MPDU;
   de-`static` of `ath_tgt_txqaddbuf` so the handler reuses the real data-TX path.
-- `target_firmware/wlan/attacks.h` — declarations.
+- `target_firmware/wlan/attacks.h`: declarations.
 
-**Driver** — modwifi backports `ath9k_htc`, shipped upstream as a tarball (not a git repo):
+**Driver**: modwifi backports `ath9k_htc`, shipped upstream as a tarball (not a git repo):
 ```
 modwifi-20150118.tar.gz   md5 291bd2ab8c900a2ff22e26f6becf6048   (2015-01-18)
 tar xzf modwifi-20150118.tar.gz            # -> drivers/
@@ -29,125 +44,126 @@ cd drivers && git init && git add -A && git commit -m base
 git apply ../driver.diff
 ```
 Changed files:
-- `drivers/net/wireless/ath/ath9k/wmi.h` — command id + `wmi_cosr_gated_tx_cmd/resp`.
-- `drivers/net/wireless/ath/ath9k/htc_drv_debug.c` — debugfs write `cosr_gated_tx` (fires the
-  gate) and read-only `cosr_beacons` (the OTA beacon tap for `sync: "beacon"`).
-- `drivers/net/wireless/ath/ath9k/htc_drv_txrx.c` — feeds each heard beacon (sender TSF + RX
-  mactime) into the `cosr_beacons` tap.
-- `net/mac80211/debugfs_netdev.c` — exposes the `tsf` debugfs file on **AP** interfaces (stock
-  mac80211 only exposes it for IBSS/mesh, but the host scripts read `netdev:*/tsf` to seed the
-  gate on an AP; one line, in `add_ap_files`).
+- `drivers/net/wireless/ath/ath9k/wmi.h`: command id + `wmi_cosr_gated_tx_cmd/resp`.
+- `drivers/net/wireless/ath/ath9k/htc_drv_debug.c`: debugfs write `cosr_gated_tx` (fires the
+  gate) and read-only `cosr_beacons` (every beacon heard, with the sender's TSF, the local
+  receive time, and the level it arrived at).
+- `drivers/net/wireless/ath/ath9k/htc_drv_txrx.c`: feeds each heard beacon into that ring.
+- `net/mac80211/debugfs_netdev.c`: exposes the `tsf` file on **AP** interfaces (stock mac80211
+  exposes it only for IBSS/mesh; one line, in `add_ap_files`). Nothing in the tooling reads it:
+  the controller never interrogates a radio's clock, for the reasons in [`SYNC.md`](SYNC.md).
+  It is kept because being able to read a transmitter's clock by hand is worth having when
+  something looks wrong, and it can be dropped if you would rather not patch mac80211.
 
-Stock **hostapd** is used unchanged — the APs run a 4-line generated config (`run.sh up`
-writes it from `topo.json`); no hostapd source changes are needed.
+Stock **hostapd** is used unchanged: the APs run a short generated config that `cosr up`
+writes from `topo.json`; no hostapd source changes are needed.
 
 > **Reproducibility.** The firmware `.fw` is byte-reproducible from `firmware.diff` on a clean
-> checkout (verified md5 `0cdf25a…`). Kernel `.ko`s are not byte-reproducible (they embed build
-> paths/timestamps), but rebuild to functionally identical code (identical normalized
-> disassembly to the reference modules).
+> checkout. Kernel modules are not byte-reproducible (they embed build paths and timestamps) but
+> rebuild to functionally identical code.
 
-## 2. Build & flash
+## 2. Build and flash
 
-The modwifi image already carries the driver *source* (`~/modwifi/drivers/`), kernel headers,
-`gcc`/`make`, `python3`, `tcpdump`, and `iw`. Two packages it does not ship:
+Each AP node needs `openssh-server` (so the controller can reach it) and `hostapd` (AP mode):
 ```bash
 sudo apt-get update
-sudo apt-get install -y openssh-server   # so the host-side scripts can reach this VM over ssh
-sudo apt-get install -y hostapd          # AP mode; not preinstalled
+sudo apt-get install -y openssh-server hostapd
 ```
-(No `tshark` is needed on any VM — the tracker uses `tcpdump`; frame parsing runs host-side.)
 
-**Firmware** — two ways to get the Co-SR `htc_9271.fw` onto a card VM:
-- *Build it* (source of truth): take the firmware tree from §1 (the `modwifi-ath9k-htc` clone
-  with `firmware.diff` applied — the same source also ships inside
-  `~/modwifi/modwifi-20150118.tar.gz`). Building needs the Xtensa big-endian toolchain; set it up
-  per the [modwifi build docs](https://github.com/vanhoefm/modwifi), build `target_firmware`
+**Firmware**: two ways to get the Co-SR `htc_9271.fw` onto a node:
+- *Build it* (source of truth): take the firmware tree from §1. Building needs the Xtensa
+  big-endian toolchain; set it up per the
+  [modwifi build docs](https://github.com/vanhoefm/modwifi), build `target_firmware`
   (`make -C target_firmware` → `htc_9271.fw`), then install:
   ```bash
   sudo cp /lib/firmware/htc_9271.fw /lib/firmware/htc_9271.fw.stock   # back up stock first
   sudo cp <built>/htc_9271.fw /lib/firmware/htc_9271.fw
   ```
-- *Copy the prebuilt `.fw`* to additional card VMs: build once as above, then `scp` the resulting
-  `htc_9271.fw` into each VM's `/lib/firmware/` (same backup-then-copy).
+- *Copy the prebuilt `.fw`* to further nodes: build once, then copy the resulting `htc_9271.fw`
+  into each node's `/lib/firmware/` (same backup-then-copy).
 
-**Driver** — builds on the VM against its own kernel (backports tree, no `git` needed):
+**Driver**: builds on the node against its own kernel:
 ```bash
 cd ~/modwifi/drivers
-patch -p1 < /path/to/driver.diff         # ath9k_htc + the mac80211 tsf-on-AP one-liner (§1)
-make                                     # incremental; recompiles the touched modules
+patch -p1 < /path/to/driver.diff
+make
 sudo make install                        # -> /lib/modules/$(uname -r)/updates + depmod
 ```
 
-**Load the new firmware + driver.** The AR9271 downloads firmware into its RAM only on a USB
-re-enumeration — `rmmod`/`modprobe` keeps the old resident firmware, and a new driver against
+**Load the new firmware and driver.** The AR9271 downloads firmware into its RAM only on a USB
+re-enumeration: `rmmod`/`modprobe` keeps the firmware already resident, and a new driver against
 old firmware gives WMI timeouts (`-110`). So:
 ```bash
-sudo rmmod ath9k_htc     # drop the old (stock) module so the Co-SR one binds on reconnect
+sudo rmmod ath9k_htc     # drop the old module so the Co-SR one binds on reconnect
 ```
-then re-enumerate the dongle: unplug/replug it, or disconnect+reconnect it host-side
-(VMware: *Removable Devices → Atheros AR9271 → Disconnect*, then reconnect). On reconnect the Co-SR
-driver autoloads and downloads the Co-SR firmware. Verify:
+then re-enumerate the dongle: unplug and replug it, or detach and re-attach it from outside the
+machine if the node is virtualised. On reconnect the Co-SR driver autoloads and downloads the
+Co-SR firmware. Verify:
 ```bash
-dmesg | grep -i 'Transferred FW'    # Co-SR firmware loaded
+dmesg | grep -i 'Transferred FW'
 ```
-Then bring the card up as an AP with `run.sh up` (see [`USAGE.md`](USAGE.md) — it
-generates the hostapd config from `topo.json`, never hand-write one) so the per-vif debugfs nodes appear, and
-confirm driver + firmware together:
+
+> Re-enumeration is a physical action. Plan for it: a card whose firmware failed to initialise
+> drops off the bus, and no command on the node itself can bring it back.
+
+## 3. The message broker
+
+Nodes dial out to a broker on the controller, so no node listens on any port and no node needs
+per-node configuration. Install [`nats-server`](https://nats.io) (a single binary) on the
+controller and run it with a token:
 ```bash
-sudo ls /sys/kernel/debug/ieee80211/*/ath9k_htc/cosr_gated_tx   # Co-SR driver bound
+nats-server -a 0.0.0.0 -p 4222 --auth <your-token>
 ```
-The definitive check is a gated fire returning `status=0` (`./run.sh gate`), not a WMI error.
+Put the same token in `topo.json` as `"token"`. Bind it to the interface facing the testbed.
 
-## 3. Test testbed
+## 4. Install the controller
 
-Bring up your VMs — all should be reachable over the network by IP and the modwifi image with the
-flashed firmware + driver:
+On the controller only; the nodes need nothing installed:
+```bash
+pip install -e .          # provides the `cosr` command
+```
+The package has no dependencies. `ssh`, `sshpass` and `nats-server` are external programs.
 
-- **N AP VMs** (≥ 2), each with one AR9271, running as an AP (hostapd). One is the **reference**
-  (its clock is the timing reference); the rest are **followers** whose targets are mapped into the
-  reference's instant. Each AP is single-VIF (AP only) — see [`USAGE.md`](USAGE.md) note 1.
-- **one TSF observer** — any 802.11 card in monitor mode on the same channel as the APs, that
-  hears every AP's beacons and runs the offset tracker.
-- **station (receiver) cards** — one monitor-mode card per station, on the shared channel,
-  each where a receiver would sit. A shot's `links` name which AP transmits to which station;
-  a station counts its AP's stamped stream and reports per-location delivery and AP→station RSSI
-  (`measure`, [`EXPERIMENTS.md`](EXPERIMENTS.md)).
+## 5. First run
 
-### Deployment model
+Describe the testbed in a `topo.json` (copy `examples/topo_beacon.json`). `cosr scan <ip>...`
+reads each node's wireless interface and address for you. Then:
 
-The system has two independent planes, and the topology requirements follow from them.
+```bash
+cosr up     topo.json experiment.json    # radios up, node program placed and started
+cosr status topo.json experiment.json    # everything running, on the same build
+cosr doctor topo.json experiment.json    # the health verdict, read this before measuring
+cosr run    topo.json experiment.json    # one round
+```
 
-- **Control plane (triggers).** The host reaches each AP over an IP management channel (ssh)
-  to write the gated-TX command. This path is non-real-time: the trigger carries an absolute
-  target TSF and the on-chip gate absorbs any delivery jitter, so it has no latency requirement and
-  needs no particular medium. Recommended to keep it off the experimental channel so control
-  traffic does not perturb the measurement.
-- **Timing plane (alignment).** Purely over the air via the beacon TSF; no wired synchronization.
+`up` is idempotent and safe to repeat; it stops any previous node program before starting the
+new one, and refuses to start a node whose copy of the program does not match the controller's.
 
-Requirements:
+## 6. Deployment model
 
-- **AR9271 radios and a modwifi-compatible kernel.** The gate firmware is built for the AR9271
-  (`k2` target) and the driver + the mac80211 tsf-on-AP patch target the modwifi image's kernel.
-  Other chipsets or kernels require a port, not just a rebuild.
-- **One card per node.** The debugfs path globs (`ieee80211/*/…` in `cosr_ctl.py` and the
-  scripts) assume a single card per VM; a second card breaks the wildcard resolution.
-- **The APs' clocks must be relatable over the air.** The APs' free-running TSFs are aligned
-  through beacons on a common clock. The default `sync: "monitor"` needs **one observer that hears
-  every participating AP's beacons**; the two scaling modes drop that requirement — `beacon` (APs
-  hear each other) and multi-monitor (`monitors` list, several partial observers bridged by shared
-  APs) only need the graph to be connected to the reference AP. See
-  [`USAGE.md`](USAGE.md) §0 and [`SYNC.md`](SYNC.md).
-- **A transmitting AP must be idle on the voice (VO) queue.** Each shot drains the VO
-  QCU so the gated frame is the sole descriptor at the target instant; any competing VO-class
-  traffic on that AP is dropped. Use dedicated APs (no associated clients pushing traffic) during
-  coordinated shots.
-- **Size the fire lead within two bounds.** The shared instant (`lead_us` ahead of now) must be far
-  enough ahead to cover the serial trigger fan-out — roughly one ssh round-trip per AP — or a later
-  AP's target lands in the past and the gate rejects it as LATE. Also, it must stay under the
-  firmware's ~600 ms ceiling, which also keeps the offset tracker's linear TSF extrapolation valid.
-  The 150 ms default (`lead_us`) suits a handful of APs on a LAN; the AP writes are threaded, so it
-  need not grow with AP count.
+The system has two independent planes, and the requirements follow from them.
 
-Note each AP's IP, interface name (`wlanX`), and BSSID (`iw dev <iface> info`), plus each station's
-and the observer's IP and interface — these are the fields of `topo.json` (nodes, channel, password).
-root ssh is disabled on the image, so debugfs is chmod'd (by `run.sh up`) rather than firing as root.
+- **Control plane.** The controller reaches each node over an IP management network. This path is
+  not real-time: an instruction carries an absolute target time and the on-chip gate absorbs any
+  delivery jitter. Keep it off the experimental channel so control traffic does not perturb the
+  measurement.
+- **Timing plane.** Entirely over the air, via the beacon timestamps. No wired synchronization.
+
+Further requirements:
+
+- **The transmitters' clocks must be relatable over the air.** Their free-running counters are
+  related through beacons. Either the APs hear each other (`sync: "beacon"`) or receivers hear
+  the APs (`sync: "monitor"`); all that matters is that the graph reaches the reference. See
+  [`SYNC.md`](SYNC.md).
+- **A transmitting AP must be idle on the voice queue.** Each shot drains that queue so the gated
+  frame is the sole descriptor at the target instant; competing voice-class traffic on that AP is
+  dropped. Use dedicated APs during coordinated shots.
+- **Size the lead to the control network.** The shared instant is placed `lead_us` ahead of now.
+  It must cover the time for the instruction to reach every node, or a node finds its instant
+  already past and the gate refuses the shot; and it must stay inside the window the gate accepts.
+  The 400 ms default suits a wireless management network; a wired one can use less, which also
+  slightly improves the clock relation. `doctor` names this failure explicitly when it happens.
+
+The node program is started under `sudo` with the credentials from `topo.json`, and runs as root
+because capturing raw frames, writing the transmit trigger and reading kernel messages all
+require it. `up` tightens the two debugfs entries it uses to `0640` rather than widening them.

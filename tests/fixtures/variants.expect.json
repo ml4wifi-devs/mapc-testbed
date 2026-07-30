@@ -1,0 +1,46 @@
+{
+ "source": "diag.pcap",
+ "select": "stamped",
+ "frames": [
+  {
+   "frame": 1,
+   "radiotap_len": 24,
+   "mactime": 2812880258,
+   "signal_dbm": -56,
+   "freq_mhz": 2412,
+   "fc_type": 2,
+   "fc_subtype": 0,
+   "sa": "24:ec:99:95:22:2f"
+  },
+  {
+   "frame": 2,
+   "radiotap_len": 24,
+   "mactime": 2813927360,
+   "signal_dbm": -59,
+   "freq_mhz": 2412,
+   "fc_type": 2,
+   "fc_subtype": 0,
+   "sa": "24:ec:99:95:22:2f"
+  },
+  {
+   "frame": 3,
+   "radiotap_len": 24,
+   "mactime": 2815125432,
+   "signal_dbm": -56,
+   "freq_mhz": 2412,
+   "fc_type": 2,
+   "fc_subtype": 0,
+   "sa": "24:ec:99:95:22:2f"
+  },
+  {
+   "frame": 4,
+   "radiotap_len": 24,
+   "mactime": 2816317240,
+   "signal_dbm": -54,
+   "freq_mhz": 2412,
+   "fc_type": 2,
+   "fc_subtype": 0,
+   "sa": "24:ec:99:95:22:2f"
+  }
+ ]
+}

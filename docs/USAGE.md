@@ -1,17 +1,21 @@
 # Usage
 
-Prereq: firmware + driver flashed and the testbed described in a `topo.json` (see
-[`INSTALL.md`](INSTALL.md)). Everything is driven by `run.sh`, which reads the topo and needs no
-testbed values baked in. Use your own IPs / interfaces / BSSIDs — the values below are placeholders.
+Two JSON files describe everything: `topo.json` is the testbed, `experiment.json` is the experiment.
+Every command takes them in that order.
 
 ## 0. Config files
 
-**`topo.json` — the physical testbed (static).** Named nodes, the shared channel, the ssh password,
-and which node observes the cross-AP clock. `station_id` is the station's identity (0–255).
+**`topo.json`, the physical testbed (static).** Named nodes, the shared channel, the logins, the
+broker token, and which node the timing measurements observe from.
 ```json
 {
   "channel": 1,
-  "password": "modwifi",
+  "token": "change-me",
+  "ap_user": "modwifi",
+  "ap_password": "modwifi",
+  "monitor_user": "pi",
+  "monitor_password": "raspberry",
+  "sync": "beacon",
   "observer": "sta1",
   "nodes": {
     "apA":  {"role": "ap",      "ip": "10.0.0.11", "iface": "wlan0", "mac": "<apA_bssid>", "ssid": "cosrA"},
@@ -21,262 +25,198 @@ and which node observes the cross-AP clock. `station_id` is the station's identi
   }
 }
 ```
-AR9271 is 2.4 GHz, so `channel` is 1–13; every node shares it. The `observer` must be a station
-that hears every AP's beacons (it may also be a measured receiver — no dedicated clock card
-needed). If omitted, the first station is used.
 
-The **first AP in `nodes`** is the timing **reference** (the "root" every other AP is aligned to);
-there is no master/slave field and no hand-written graph — who-hears-whom is discovered at runtime.
-Keep the first AP in `nodes` and the first AP in a shot's `links` the same node, so the fire
-reference matches the clock reference. Interface names (`wlanX`) and MACs reshuffle on every USB
-re-enumeration; `./run.sh scan <ip> [ip ...]` reads each node's current iface + MAC and prints
-paste-ready node stubs, so you don't hand-read them.
+| field | meaning |
+|---|---|
+| `channel` | 2.4 GHz channel 1–13; every node shares it. |
+| `token` | Shared secret for the broker. Must match what `nats-server` was started with. |
+| `hub` | Optional. The address nodes dial to reach the broker. Omitted, the controller uses the address that faces the testbed. |
+| `sync` | `"beacon"` (the APs hear each other) or `"monitor"` (receivers hear the APs). See [`SYNC.md`](SYNC.md). |
+| `monitors` | With `sync: "monitor"`, the stations that contribute observations. Always list them explicitly. |
+| `observer` | Where a coincidence measurement is taken. Defaults to the first link's receiver. |
+| `station_id` | A station's identity, 0–255, stamped into the frames addressed to it. |
 
-A `"sync"` field picks the cross-AP clock source; the two forms are mutually exclusive and both
-end at the same `/tmp/offset.json`:
+Credentials: APs use `ap_user`/`ap_password`, every `role: "station"` node uses
+`monitor_user`/`monitor_password`. Each falls back to a flat `user`/`password`, so a testbed with
+one login everywhere can set just `"password"`. The same login is used for both ssh and `sudo`.
 
-- **`"monitor"`** — an explicit `"monitors": ["sta1", ...]` list of stations that timestamp the
-  APs' beacons. One monitor that hears every AP is the simple case; several monitors each hearing a
-  subset also work — an AP heard by two monitors bridges them, composed on the control host, so no
-  node need hear every AP. No firmware/driver change, no calibration. Always list the monitors
-  explicitly. Example: [`examples/topo_monitor.json`](../examples/topo_monitor.json).
-- **`"beacon"`** — over-the-air (OTA) beacon sync: the APs hear *each other's* beacons (driver
-  beacon tap, in `driver.diff`) and the host composes the graph. No monitor cards. No calibration:
-  the tap reports each beacon's rate and length and the tracker computes the airtime itself.
-  Example: [`examples/topo_beacon.json`](../examples/topo_beacon.json).
+The **first link's transmitter** is the timing reference that every other one is related to, and
+the first link's receiver is the default `observer`. There is no master/slave field and no
+hand-written graph: who-hears-whom is discovered at runtime. Keep the reference the same across
+an experiment: a session holds one clock graph, anchored to the reference it started with, so
+changing it mid-run is refused rather than silently re-anchored.
 
-All three are validated end-to-end on the live testbed (per-AP bias sub-µs; see
-[`SYNC.md`](SYNC.md), "Status"). The `observer` is still the `test-sync` measurement
-point in every mode. To see which sync method is tighter on your own testbed, `run.sh compare`
-fires the same `test-sync` through each and prints the per-AP bias/jitter side by side.
+Interface names and addresses reshuffle on every USB re-enumeration. `cosr scan <ip> [ip ...]`
+reads each node's current interface and address and prints paste-ready node stubs.
 
-**`shot.json` — the experiment.** The common A-MPDU shape (identical across APs, so comparisons
-are valid), common MCS/power (overridable per link), the timing, and `links` — which APs transmit
-and which station each targets. `links[0].ap` is the timing reference.
+**`experiment.json`, the experiment.** The aggregate shape and the timing are common to every link, so
+comparisons between links are valid. Rate and power are stated per link.
 ```json
 {
-  "nframes": 1, "frame_len": 200,
-  "mcs": 0, "txpower_mbm": 2000,
-  "stagger_us": 0, "lead_us": 150000, "shots": 20, "gap_s": 0.15,
+  "nframes": 5, "frame_len": 300,
+  "repeats": 20, "spacing_us": 15000,
+  "stagger_us": 0, "lead_us": 400000,
+
   "links": [
-    {"ap": "apA", "station": "sta1"},
-    {"ap": "apB", "station": "sta2", "mcs": 7}
+    {"ap": "apA", "station": "sta1", "mcs": 7, "txpower_dbm": 14},
+    {"ap": "apB", "station": "sta2", "mcs": 2, "txpower_dbm": 8}
   ]
 }
 ```
-A link `apA -> sta1` makes apA transmit a gated stream stamped with sta1's `station_id`, and its
-delivery is counted **at sta1's own receiver**, for frames whose `(source AP, station_id)` match.
-So different APs can target different stations in the same shot, and each station's number is its
-own. One AP per link per shot (an AP targeting two stations is two separate shots).
+
+| field | meaning |
+|---|---|
+| `nframes`, `frame_len` | The aggregate: one frame, or a true A-MPDU of `nframes` subframes. Common to every link. `nframes * frame_len` must fit the transmit pool (1500 bytes), so 5×300, 10×150 and 15×100 are the useful shapes. |
+| `mcs`, `txpower_dbm` | **Stated on every link, with no common default.** These are what an experiment varies between links, the way one link is moved across the capture threshold while another is held fixed, so a link that omits either is refused rather than silently inheriting a value. `mcs` is 0..7 and `txpower_dbm` a whole number of dBm, 0..20; see §4 note 2. |
+| `repeats` | How many shots the round contains. Statistics come from raising this, not from enlarging the aggregate. |
+| `spacing_us` | Time between shots in a batch. Establish it with `calibrate`. |
+| `stagger_us` | Deliberate separation between transmitters, per link position. `0` fires them together. |
+| `lead_us` | How far ahead the shared instant is placed. See [`INSTALL.md`](INSTALL.md) §6. |
+
+A link `apA -> sta1` makes apA transmit a stream stamped with sta1's identity, counted **at
+sta1's own receiver**, for frames whose source address and stamped identity both match. Different
+APs can therefore target different stations in the same round, and each station's number is its
+own. One link per AP per round.
 
 ## 1. Bring the testbed up
 
-Testbed state lives in `/tmp` and dies on reboot. `run.sh up` starts stock hostapd on each AP, puts
-every station in monitor mode on the shared channel, opens debugfs, and launches the cross-AP
-offset tracker on the observer.
 ```bash
-./run.sh up     topo.json    # topo.json is the first arg (defaults to ./topo.json)
-./run.sh status topo.json    # APs up? gated-TX node present? monitors + tracker live + offset fresh?
+cosr up     topo.json experiment.json    # radios up, node program placed and started
+cosr status topo.json experiment.json    # what is running, and on which build
 ```
-The tracker (`offset_tracker.py`, deployed automatically) hears every AP's beacons and writes
-`/tmp/offset.json` on the observer — `{ref_tsf, mon_tsft, offsets:{<mac>:[offset,slope]}}`, the
-reference AP at `[0,0]`. Keep it running — a stale offset (a dead tracker) makes the two clocks
-drift apart and the cross-AP alignment degrade silently. `status` shows it.
 
-In the scaling modes `up` instead starts the tracker on the **control host** and `offset.json` lives
-*there*, not on a node: `beacon_tracker.py` for `sync: "beacon"`, or `monitor_tracker.py` (fed by
-`offset_tracker.py --raw` on each listed monitor) for multi-monitor. `status`/`doctor` label it
-`(host)`; don't look for `offset.json` on the observer in those modes.
+`up` starts the access points, puts the receivers into monitor mode on the shared channel, copies
+the node program to every node, and starts it. It stops any previous copy first and refuses to
+start a node whose copy does not match the controller's, so a half-updated testbed cannot quietly
+produce results that look comparable.
 
-## 2. Basic commands
+## 2. Commands
 
 ```bash
-./run.sh shot      topo.json [shot.json]   # fire; per-link RAW delivery (lightweight; measure normalizes)
-./run.sh measure   topo.json [shot.json]   # fire + model inputs: per-link success + RSSI matrices
-./run.sh test-sync topo.json [shot.json]   # fire staggered; per-AP cross-AP sync (bias/jitter/p90)
+cosr doctor    topo.json experiment.json   # the health verdict; read this before measuring
+cosr run       topo.json experiment.json   # one round -> delivery, status and signal levels
+cosr calibrate topo.json experiment.json   # the shortest inter-shot spacing that delivers
+cosr reset     topo.json experiment.json   # clear node state without redeploying
+cosr down      topo.json experiment.json   # stop the node program and the radios
+cosr scan      <ip> [ip ...]               # read each node's interface and address
+                                           #   [--user USER] [--password PW]
 ```
-(`topo.json` defaults to `./topo.json`, `shot.json` to `./shot.json`.) Each reads the reference AP's TSF, maps the one shared
-instant into every AP's own TSF via `/tmp/offset.json`, fans the gated triggers out in parallel,
-then parses each station's capture. `shot` and `measure` are separate — no auto-dispatch.
 
-*The denominator.* Every shot's firmware outcome is read back from the AP's kernel log
-(`cosr_gated_tx: status=`), so `delivery = rx / shots-that-actually-FIRED`. A gate miss
-(`LATE`/`TOOFAR`) is surfaced in `warnings`, never counted as a channel loss.
+**`doctor`** is the one command to trust before an experiment. It checks every way the clocks can
+drift apart, and reports a verdict per check:
 
-**`measure` result** (2 APs, different stations):
-```json
-{
-  "success_prob": {
-    "apA->sta1": {"station_id":1,"fired":28,"sent":28,"rx":28,"delivery":1.0,
-                  "mcs_cmd":0,"mcs_seen":0},
-    "apB->sta2": {"station_id":2,"fired":28,"sent":28,"rx":26,"delivery":0.929,
-                  "mcs_cmd":0,"mcs_seen":0}
-  },
-  "rssi_ap_to_sta_dbm": {"apA->sta1": -34.4, "apB->sta2": -32.8},
-  "rssi_ap_to_ap_dbm":  {"<apA>": {"<apB>": -58.1}, "<apB>": {"<apA>": -40.5}},
-  "warnings": ["apA: 2/30 shots did not fire (late=0 toofar=2 nobf=0) -- not counted as loss"]
-}
-```
-- `delivery` — raw fraction at the station: `rx / fired`, counted from the unique stamped
-  subframe ids the receiver captured. A dead capture yields `delivery: null`, not `0`.
-- `rssi_ap_to_sta_dbm` — mean per-frame data RSSI, not a beacon proxy.
-- `rssi_ap_to_ap_dbm` — AP↔AP interference matrix (transient `mon0` VIF per AP, post-fire; note 1).
-- `mcs_seen` vs `mcs_cmd` + `warnings` — a commanded HT rate the AP's table lacks downgrades
-  silently to legacy; the row is then mislabeled — fix the rate before recording it.
-
-**`test-sync` result** (per non-reference AP, error = measured emission delta − intended stagger):
-```json
-{ "reference":"apA", "stagger_us":300, "shots":30,
-  "per_ap": {"apB": {"paired":28, "bias_us":0.4, "jitter_us":0.8, "median_us":0.0, "p90_abs_us":2.0, "outliers":1}},
-  "fired": {"apA":28, "apB":29} }
-```
-`bias_us` (mean signed error) and `jitter_us` (std) are the two distinct sync defects — a constant
-offset vs random spread; `median_us` (signed) and `p90_abs_us` (worst-case magnitude) are robust
-summaries over *every* shot. A few shots per run land hundreds of µs off — an AR9271 monitor
-RX-mactime artifact, not a real emission error — so `bias_us`/`jitter_us` are computed over the
-inliers (|err| ≤ 50 µs) and `outliers` counts the excluded shots; if you compute your own bias/jitter
-from a raw capture, drop those outliers too or they dominate the mean/std. With a live tracker the
-gate is µs-clean cross-AP (|bias|, jitter, p90 all a few µs). Pairs on the first subframe (idx 0) only.
-
-Fields recap: `mcs` (0–7 → HAL `0x80|mcs`); `txpower_mbm` real power via `iw` (`2000` = 20 dBm);
-`nframes`/`frame_len` bounded by the firmware `POOL_ID_ATTACKS` pool (`nframes ≤ 5`,
-`frame_len ≤ 300`; larger needs a pool bump + reflash); `stagger_us` (`0` = deliberate collision).
-
-## 3. Command interface (the WMI write payload)
-
-Host → firmware over WMI/HTC, id `WMI_COSR_GATED_TX_CMDID`. The driver exposes it as debugfs
-`.../ath9k_htc/cosr_gated_tx`. Write payload — a 17-byte little-endian prefix + header template:
-```
-[8  target_tsf ]  absolute target TSF, LE (0 => fire immediately, ungated TX-path smoke test)
-[1  rate       ]  HAL rateCode; 0 => firmware min-rate default; HT/MCS = 0x80|mcs
-[1  txpower    ]  0..63; reaches the TX descriptor but the AR9271 RF clamps it (note 2); 0 => 63
-[1  nframes    ]  A-MPDU subframes; 0/1 => a single frame
-[1  stamp_off  ]  byte offset of the 6-byte id stamp inside each subframe
-[1  station_id ]  logical destination id, written into the stamp
-[2  seq        ]  base sequence number, LE, written into the stamp
-[2  frame_len  ]  full length of each synthesized subframe, LE
-[N  header     ]  24-byte 802.11 header template; the body is synthesized on-chip
-```
-The frame body cannot be shipped over WMI (`WMI_CMD_MAX_LEN` is 100 B), so the firmware
-synthesizes each `frame_len` subframe on-chip from the header template, pads the body with `0x88`,
-and writes a 6-byte id stamp `C0 5A <station_id> <seq_lo> <seq_hi> <subframe_idx>` at `stamp_off`.
-A monitor counts delivered subframes by unique `(source AP, station_id, seq, idx)` — this holds up under
-Co-SR collisions. Read a TSF: debugfs `netdev:*/tsf`.
-
-Gate mechanics: reject targets > 600 ms ahead; a two-phase busy-poll (coarse wait with IRQ on so
-beacons/USB keep being serviced, then a ~2 ms final approach with IRQ off) fires on the VO QCU with
-carrier-sense and backoff disabled, so the frame keys at the target instant regardless of the other
-AP. Frames are NOACK + a single try — a gated frame is never retransmitted (a retry would fire
-ungated, outside the shared instant). `nframes > 1` builds one true HT A-MPDU (single PPDU, N
-delimited subframes) with no Block-Ack; a passive monitor deaggregates it and counts each subframe
-by its stamp.
-
-## 4. Diagnostics (per-layer checks)
-
-```bash
-./run.sh gate topo.json [shot.json]   # single-AP absolute gate precision (the first link's AP)
-```
-`gate` fires the **first link's AP alone** for `shots` shots, pairs each frame's monitor tsft
-with its own commanded target, and detrends the AP↔monitor clock ramp. Result:
-```json
-{ "ap":"apA","station":"sta1","shots":40,"fired":40,"captured":38,"paired":38,
-  "drift_us_per_shot":4.5,"residual_median_us":0.66,"residual_max_us":1.8,"outliers":[],"clean":true }
-```
-Expect **`residual_median_us` < 1** and `outliers: []` (`clean: true`); a late fire spikes off the
-ramp into `outliers`. Same command, same two files, same wire as every other command — `gate` is
-just `cosr_ctl.py gate` (no separate script). To gate a different AP, make it the first link. Use
-it after any firmware/driver change to confirm the µs gate.
-
-**When a shot returns 0 (or intermittently few) frames RX — `./run.sh doctor`.** "0 frames RX"
-is several distinct faults wearing one symptom; `doctor` probes every node and prints a PASS/FAIL
-table that names the layer:
-```bash
-./run.sh doctor topo.json  # per node: reachable? AP beaconing? station in monitor on-channel?
-                         #           does each station HEAR each AP? tracker alive + offset fresh?
-```
-- **`UNREACHABLE`** — the VM is down or the AR9271 dropped off USB; re-enumerate the dongle
-  (host-side disconnect/reconnect), not a guest reboot.
-- **station `<- apX  SILENT`** — that station cannot hear that AP's *beacons*, so it cannot receive
-  its *data* either. This is the usual 0-RX cause (range, wrong channel, card in the wrong mode).
-- **station hears beacons but a shot still gives `rx=0`** — capture is healthy; look at the
-  gate/data path instead (`fired` count, `mcs_seen` vs `mcs_cmd`, a stale offset → `TOOFAR`).
-- **tracker `STALE`/`not-running`** — cross-AP alignment is drifting; restart it.
-
-**Fast fix — `./run.sh reset`.** Re-asserts every station's monitor mode + channel, bounces only
-a *dead* AP (a live AP keeps its free-running TSF undisturbed), and restarts the offset tracker —
-the common soft faults without a full `up`. A `wedge scan WARN` / `UNREACHABLE` needs a physical
-USB re-enumerate first; `reset` fixes the rest. Re-run `doctor` to confirm.
-
-## 5. Files
-
-| file | role |
+| check | what it catches |
 |---|---|
-| `run.sh` | the driver — reads `topo.json`; `up`/`status`/`doctor`/`reset`/`shot`/`measure`/`test-sync`/`gate`/`down` |
-| `scripts/cosr_ctl.py` | the controller — `shot`/`measure`/`test-sync`/`gate`: fire N APs, count per-(AP,station) delivery, RSSI, sync, gate precision |
-| `scripts/topo_env.py` | emit `topo.json` as shell records (so `run.sh` needs no jq) |
-| `scripts/scan_nodes.py` | read each node's wireless iface + MAC from its IP (`run.sh scan <ip>...`), for building `topo.json` |
-| `scripts/offset_tracker.py` | single-observer tracker (on the observer VM); `--raw` mode feeds multi-monitor |
-| `scripts/clock_graph.py` | shared affine clock-graph core (compose / BFS / `offset.json` emit) for the scaling modes |
-| `scripts/beacon_tracker.py` | beacon-sync tracker; on the host, polls each AP's `cosr_beacons`, composes the graph |
-| `scripts/monitor_tracker.py` | multi-monitor tracker; on the host, composes each monitor's raw fits into the graph |
+| `agents` | A node not answering, or running a different build from the controller. |
+| `clock_graph` | A transmitter with no path to the reference clock; it cannot be commanded at all. |
+| `extrapolation` | The relation is known, but not precisely enough for an instant this far ahead. |
+| `path_consistency` | One observation contradicting the rest. Invisible to everything else, because the contradicting edge simply becomes the answer wherever the traversal used it. |
+| `fire` | The gate refusing shots, and which side of its window they fell outside: already past (the instruction did not arrive in time), or too far ahead (the relation is wrong). |
+| `coincidence` | How far apart the transmitters actually landed. |
+| `divergence` | Whether that separation *grows* across a batch, which a summary of the spread cannot distinguish from noise. |
+| `stability` | A relation that holds once and not again. |
 
-All Python is python3 (the observer tracker runs under the modwifi image's python3; the host-side
-scaling trackers run on the control host).
+A verdict is `PASS`, `FAIL`, `SKIP` or `NA`. **A skipped check never counts as a pass**: the
+overall verdict becomes `INCONCLUSIVE`. An unrun check tells you nothing about the failure it
+looks for, so treating it as a pass would be guessing. `doctor` exits non-zero unless everything
+passed, so a script can stop on it.
 
-## 6. Implementation notes
+`doctor` establishes the testbed at one moment. It cannot see a node that fails midway through a
+long run; that is what the per-shot gate outcome and the named per-link status in *every* round
+are for.
 
-Non-obvious constraints of the AR9271 / ath9k_htc platform and how the design accommodates them.
+## 3. Results
 
-1. **A monitor VIF rebases an AP's phy TSF.** Adding a `mon0` interface to an AP's radio shifts
-   that phy's TSF and can perturb the on-chip gate, so APs remain single-VIF and the cross-AP
-   offset tracker runs on a station node, off beacons. The lone exception is the AP↔AP RSSI
-   matrix, which adds `mon0` after firing and removes it before the next shot (verified clean).
-2. **The descriptor TX-power field is clamped by the AR9271 RF** (measured: with `iw` fixed at
-   20 dBm, sweeping the descriptor byte 10/4/1 dBm left the data-frame RSSI flat at −19.3/−19.4/
-   −19.5 dBm; with the byte fixed, sweeping `iw` 20/8/3 dBm moved RSSI to −19.6/−26.7/−34.1).
-   Real power is therefore set via `iw dev <if> set txpower fixed <mbm>` — the descriptor byte
-   cannot replace it. The response's `send_tsf` is always 0, so the driver's `delta_us` print is
-   meaningless; only `status` matters (0 FIRED, 2 LATE, 3 TOOFAR, 1 NOBF).
-3. **Firmware loads only on USB re-enumeration**, not on `rmmod`/`modprobe`; a new driver against
-   old resident firmware yields WMI error `-110`. Reflashing needs an unplug/replug or USB reset.
-4. **A failed firmware initialization drops the dongle off the USB bus**, recovered by a host-side
-   reconnect rather than a guest reboot; toggling the guest's `.../authorized` node can hang the VM.
-5. **Carrier sense and backoff are disabled during a shot** (`AR_DIAG_FORCE_RX_CLEAR |
-   AR_DIAG_IGNORE_VIRT_CS`, `AR_DLCL_IFS = 0`) so the APs fire without deferring to one another,
-   restored per shot. Interrupts are masked only for the final ~2 ms of the approach.
-6. **The target QCU is drained before the gate, not inside the fine window** — `ah_stopTxDma` can
-   block up to a frame airtime (~500 µs) and draining in the 2 ms approach overran the target.
-7. **The firmware avoids variable 64-bit shifts** (no libgcc `__ashldi3`): the target TSF is
-   assembled from bytes with constant shifts. The target CPU is big-endian.
-8. **Gated subframes are allocated from `POOL_ID_ATTACKS`** and reclaimed through
-   `attack_free_packet` / `cosr_free_ampdu`, or the pool exhausts after a few shots; it (5 × 300 B)
-   also bounds `nframes` and `frame_len`.
-9. **`tcpdump -x` mis-dissects the `C0 5A` stamp as an LLC header and drops it**; captures are
-   parsed with tshark full-hex. tcpdump BPF filters also miscompile on this radiotap link type, so
-   captures use a broad filter and are post-filtered.
-10. **`pkill -f <pattern>` self-matches its own launching shell** (the pattern is in the shell's
-    cmdline) — it kills the shell before the real target and leaves the target running. `run.sh`
-    uses the `'[o]ffset_tracker.py'` bracket trick and `pkill -x tcpdump` to avoid this; getting it
-    wrong once left a dead tracker and a frozen offset that quietly wrecked cross-AP sync.
-11. **Testbed state is non-persistent** — hostapd/monitor config live in `/tmp`; `run.sh up` rebuilds it.
+A round returns one entry per link:
 
-## 7. Scope and limitations
+| field | meaning |
+|---|---|
+| `status` | `OK`, or a named reason the number is missing (below). |
+| `delivery` | Subframes received / subframes sent, over the shots every participant transmitted. |
+| `delivery_ppdu` | The same at aggregate granularity. Subframes of one A-MPDU share a preamble, so 20 shots of 5 subframes are ~20 independent trials, not 100. |
+| `rx`, `sent` | The raw counts behind those fractions. |
+| `fired`, `joint_shots` | Shots this AP transmitted, and shots *every* participant transmitted. Only the latter is a valid denominator for a coordinated result. |
+| `rssi_dbm` | Mean level of this link's frames at the receiver. |
+| `mcs_seen`, `mcs_note` | The rate that reached the air, where the receiver can report it. |
+| `drops` | Frames the receiver's capture lost. Non-zero makes the count a lower bound. |
+| `idx_hist` | Which subframe positions arrived, for checking aggregate integrity. |
+
+A status is never a silent zero:
+
+| status | meaning |
+|---|---|
+| `OK` | Measured. |
+| `NOT_FIRED` | The gate refused every shot; nothing was transmitted, so this is not a loss. |
+| `NOT_COUNTED` | Transmitted, but the receiver cannot bound the count: capture dead, wrong channel, its records evicted, or it restarted mid-round. |
+| `UNKNOWN` | The command failed in a way that leaves it genuinely unknown whether the frames went out. |
+| `WEDGED` | The radio's command interface failed. It needs attention before any further measurement. |
+
+Every round also carries `rssi_ap_to_sta_dbm` and `rssi_ap_to_ap_dbm`, both keyed
+`"<from>-><to>"`. The levels between transmitters come from the beacons those transmitters
+already report hearing, so they cost no extra round and stay current between rounds. An absent
+pair has not been heard, which is not the same as being out of range, so it is left out instead
+of being reported as zero.
+
+## 4. Implementation notes
+
+Constraints of the AR9271 / `ath9k_htc` platform that are not obvious, and what they force.
+
+1. **A monitor interface on an AP rebases that radio's clock.** Adding one shifts the phy's TSF
+   and perturbs the gate, so APs stay single-interface. The levels between APs are read from the
+   driver's beacon ring instead, which needs no monitor interface.
+2. **The descriptor transmit-power field is clamped by the AR9271 RF.** With the interface power
+   fixed and the descriptor byte swept 10/4/1 dBm, the received level stayed flat within 0.2 dB;
+   sweeping the interface power 20/8/3 dBm moved it by 14 dB. Real power is therefore set through
+   netlink on the interface; the descriptor byte cannot replace it. The interface accepts only
+   whole dBm: anything else is discarded without an error and the previous power stays in force,
+   which is why `txpower_dbm` is stated in whole dBm and refused otherwise.
+3. **The gate response carries no send time.** Only `status` is meaningful:
+   `0` fired, `1` no buffer, `2` the instant had already passed, `3` the instant was too far
+   ahead, `4` the radio's clock stopped or was reset while the gate was waiting. The last is
+   reported instead of hung on, and the shot leaves the denominator instead of counting as a
+   loss.
+4. **Firmware loads only on USB re-enumeration**, not on `rmmod`/`modprobe`. A new driver against
+   old resident firmware gives WMI error `-110`.
+5. **A failed firmware initialisation drops the dongle off the USB bus.** It is recovered by
+   re-attaching the device from outside the machine, not from the node.
+6. **A radio that has stopped receiving must not be "fixed" by restarting the interface.** The
+   symptom is the beacon ring no longer advancing while the node answers normally; bringing the
+   interface down in that state can stall the node in the driver's USB path. Report it and
+   re-attach the device instead.
+7. **Carrier sense and backoff are disabled during a shot**, so the APs fire without deferring to
+   one another. They are restored once the transmit queue reports it has drained, not after a
+   fixed delay: an aggregate at a low rate is milliseconds of airtime, and restoring the
+   configuration while the radio is still keying could defer the rest of the frame. Interrupts
+   are masked only for the final approach.
+8. **The target queue is drained before the gate, not inside the fine window.** Stopping DMA can
+   block for up to a frame's airtime, which would overrun the target instant if left until then.
+9. **The firmware avoids variable 64-bit shifts**: the target time is assembled from bytes with
+   constant shifts. The target CPU is big-endian.
+10. **Gated subframes come from a dedicated pool** and are reclaimed after transmission, or the
+    pool exhausts after a few shots. It also bounds `nframes * frame_len` to 1500 bytes.
+11. **Node state is not persistent.** Access point and monitor configuration live in `/tmp`;
+    `up` rebuilds it.
+
+## 5. Scope and limitations
 
 Read these before quoting a number.
 
-- **`delivery` is the raw fraction `rx / fired` at the receiver** — no capture-ceiling
-  normalization. A passive monitor with imperfect capture reads below 1.0 on a clean link; use a
-  reliable receiver so raw delivery is trustworthy, and for a per-MCS reference run the isolated
-  baseline (E2) at the same MCS.
-- **Cross-AP sync depends on a *live* tracker.** With a fresh offset the gate is µs-clean cross-AP
-  (`test-sync` median ~1 µs, p90 ~2 µs). A dead/stale tracker freezes the offset while the clocks
-  drift, and the error grows without bound — check `status` before trusting a sync number.
-- **Sync measurement needs matched frame types.** `test-sync` pairs APs on their first subframe's
-  PHY-RXSTART timestamp (idx 0 — a later A-MPDU subframe's `mactime` is a monitor artifact). Both
-  APs single-frame, or both A-MPDU. The single-AP gate itself is proven < 1 µs.
-- **Differential propagation enters the measured sync.** The observer times each frame at
-  PHY-RXSTART (TX-start + AP→observer path delay, ~3.3 ns/m). Keep the observer roughly
-  equidistant from the APs, or subtract the known path differences.
-- **Idle-queue operating point.** The gate is characterized on idle/dedicated queues (the intended
-  regime for coordinated firing). Deterministic release under a concurrently loaded queue is out of
-  scope; the firmware marks where a just-before-fire re-check would slot in.
+- **`delivery` is the raw fraction at the receiver**, with no capture-ceiling normalisation. A
+  passive receiver with imperfect capture reads below 1.0 on a clean link. Use a reliable
+  receiver, and take a per-rate reference from an isolated single-link baseline.
+- **The clock relation must be live.** With current observations the transmitters coincide to
+  about a microsecond. If observations stop, the relation is extrapolated further and further and
+  the error grows; `doctor` refuses rather than reporting a number in that state.
+- **Coincidence measurement needs matched frame shapes.** Transmitters are paired on the first
+  subframe's arrival timestamp; a later subframe of an aggregate shares it and carries no
+  independent timing. Compare like with like, and prefer one frame per shot.
+- **Differential propagation enters the measurement.** Arrival is timed at the receiver, so the
+  path difference between transmitters (about 3.3 ns/m) is included. Place the observing receiver
+  roughly equidistant, or subtract the known difference.
+- **Transmit power saturates above about 14 dBm.** The top requests land on one level, so an axis
+  reaching to 20 dBm has fewer distinct points than it looks like; below 14 dBm it scales
+  faithfully. Where the ceiling sits varies by deployment and rate; find yours with
+  [`EXPERIMENTS.md`](EXPERIMENTS.md) E8 before using power as an experimental axis.
+- **Idle-queue operating point.** The gate is characterised on idle, dedicated queues, which is
+  the intended regime for coordinated firing. Deterministic release under a concurrently loaded
+  queue is out of scope.

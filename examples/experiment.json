@@ -1,0 +1,14 @@
+{
+  "nframes": 5,
+  "frame_len": 300,
+
+  "repeats": 20,
+  "spacing_us": 15000,
+  "stagger_us": 0,
+  "lead_us": 400000,
+
+  "links": [
+    {"ap": "apA", "station": "sta1", "mcs": 7, "txpower_dbm": 14},
+    {"ap": "apB", "station": "sta2", "mcs": 2, "txpower_dbm": 8}
+  ]
+}

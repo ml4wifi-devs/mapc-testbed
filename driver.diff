@@ -1,7 +1,7 @@
 diff --git a/drivers/net/wireless/ath/ath9k/htc_drv_debug.c b/drivers/net/wireless/ath/ath9k/htc_drv_debug.c
 --- a/drivers/net/wireless/ath/ath9k/htc_drv_debug.c
 +++ b/drivers/net/wireless/ath/ath9k/htc_drv_debug.c
-@@ -1173,6 +1173,133 @@ void ath9k_htc_get_et_stats(struct ieee80211_hw *hw,
+@@ -1173,6 +1173,151 @@ void ath9k_htc_get_et_stats(struct ieee80211_hw *hw,
  }
  
  
@@ -73,13 +73,14 @@ diff --git a/drivers/net/wireless/ath/ath9k/htc_drv_debug.c b/drivers/net/wirele
 + * sender's TSF (t1, from the beacon body) and our RX TSF (t2, mactime) -- the raw
 + * pairs the cross-AP offset fit needs, captured in AP mode with no monitor VIF.
 + * Read-only, off the TX/gate path. */
-+#define COSR_BCN_RING 64
-+struct cosr_bcn_obs { u8 mac[6]; u64 t1; u64 t2; u8 rate_idx; u16 len; };
++#define COSR_BCN_RING 512
++struct cosr_bcn_obs { u8 mac[6]; u64 t1; u64 t2; u8 rate_idx; u16 len; s8 rssi; };
 +static struct cosr_bcn_obs cosr_bcn[COSR_BCN_RING];
 +static u32 cosr_bcn_head;
 +static DEFINE_SPINLOCK(cosr_bcn_lock);
 +
-+void cosr_beacon_observe(const u8 *mac, u64 t1, u64 t2, u8 rate_idx, u16 len)
++void cosr_beacon_observe(const u8 *mac, u64 t1, u64 t2, u8 rate_idx, u16 len,
++			 s8 rssi)
 +{
 +	unsigned long flags;
 +	struct cosr_bcn_obs *o;
@@ -90,6 +91,7 @@ diff --git a/drivers/net/wireless/ath/ath9k/htc_drv_debug.c b/drivers/net/wirele
 +	o->t2 = t2;
 +	o->rate_idx = rate_idx;
 +	o->len = len;
++	o->rssi = rssi;
 +	cosr_bcn_head++;
 +	spin_unlock_irqrestore(&cosr_bcn_lock, flags);
 +}
@@ -97,22 +99,38 @@ diff --git a/drivers/net/wireless/ath/ath9k/htc_drv_debug.c b/drivers/net/wirele
 +static ssize_t read_file_cosr_beacons(struct file *file, char __user *user_buf,
 +				      size_t count, loff_t *ppos)
 +{
-+	unsigned int size = COSR_BCN_RING * 64, len = 0;
++	unsigned int size = COSR_BCN_RING * 80, len = 0;
 +	unsigned long flags;
-+	u32 i, h, start;
++	u32 i, h, start, n;
 +	ssize_t rv;
++	struct cosr_bcn_obs *snap;
 +	char *buf = kzalloc(size, GFP_KERNEL);
 +	if (!buf)
 +		return -ENOMEM;
++	/* Copy under the lock, format outside it. The same lock is taken from the receive
++	 * path for every beacon heard, and this file is polled several times a second, so
++	 * formatting hundreds of lines while holding it would block reception -- on a device
++	 * whose transmit gate depends on its USB being serviced promptly. */
++	snap = kmalloc(sizeof(*snap) * COSR_BCN_RING, GFP_KERNEL);
++	if (!snap) {
++		kfree(buf);
++		return -ENOMEM;
++	}
 +	spin_lock_irqsave(&cosr_bcn_lock, flags);
 +	h = cosr_bcn_head;
 +	start = (h > COSR_BCN_RING) ? h - COSR_BCN_RING : 0;
-+	for (i = start; i < h && len < size - 64; i++) {
-+		struct cosr_bcn_obs *o = &cosr_bcn[i & (COSR_BCN_RING - 1)];
-+		len += scnprintf(buf + len, size - len, "%pM %llu %llu %u %u\n",
-+				 o->mac, o->t1, o->t2, o->rate_idx, o->len);
-+	}
++	n = 0;
++	for (i = start; i < h; i++)
++		snap[n++] = cosr_bcn[i & (COSR_BCN_RING - 1)];
 +	spin_unlock_irqrestore(&cosr_bcn_lock, flags);
++
++	for (i = 0; i < n && len < size - 80; i++) {
++		struct cosr_bcn_obs *o = &snap[i];
++		len += scnprintf(buf + len, size - len, "%pM %llu %llu %u %u %d\n",
++				 o->mac, o->t1, o->t2, o->rate_idx, o->len,
++				 o->rssi);
++	}
++	kfree(snap);
 +	rv = simple_read_from_buffer(user_buf, count, ppos, buf, len);
 +	kfree(buf);
 +	return rv;
@@ -149,17 +167,18 @@ diff --git a/drivers/net/wireless/ath/ath9k/htc_drv_debug.c b/drivers/net/wirele
 diff --git a/drivers/net/wireless/ath/ath9k/htc_drv_txrx.c b/drivers/net/wireless/ath/ath9k/htc_drv_txrx.c
 --- a/drivers/net/wireless/ath/ath9k/htc_drv_txrx.c
 +++ b/drivers/net/wireless/ath/ath9k/htc_drv_txrx.c
-@@ -15,6 +15,9 @@
+@@ -15,6 +15,10 @@
   */
  
  #include "htc.h"
 +#include <asm/unaligned.h>
 +
-+void cosr_beacon_observe(const u8 *mac, u64 t1, u64 t2, u8 rate_idx, u16 len);
++void cosr_beacon_observe(const u8 *mac, u64 t1, u64 t2, u8 rate_idx, u16 len,
++			 s8 rssi);
  
  /******/
  /* TX */
-@@ -1043,6 +1046,13 @@ static bool ath9k_rx_prepare(struct ath9k_htc_priv *priv,
+@@ -1043,6 +1046,14 @@ static bool ath9k_rx_prepare(struct ath9k_htc_priv *priv,
  	rx_status->band = ah->curchan->chan->band;
  	rx_status->freq = ah->curchan->chan->center_freq;
  	rx_status->antenna = rx_stats.rs_antenna;
@@ -168,7 +187,8 @@ diff --git a/drivers/net/wireless/ath/ath9k/htc_drv_txrx.c b/drivers/net/wireles
 +				    get_unaligned_le64((u8 *)hdr + 24),
 +				    rx_status->mactime,
 +				    rx_status->rate_idx,
-+				    skb->len - HTC_RX_FRAME_HEADER_SIZE);
++				    skb->len - HTC_RX_FRAME_HEADER_SIZE,
++				    rx_status->signal);
 +
  	rx_status->flag |= RX_FLAG_MACTIME_END;
  

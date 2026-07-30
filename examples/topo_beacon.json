@@ -1,12 +1,38 @@
 {
   "channel": 1,
-  "password": "modwifi",
+  "token": "change-me",
+  "ap_user": "modwifi",
+  "ap_password": "modwifi",
+  "monitor_user": "pi",
+  "monitor_password": "raspberry",
   "sync": "beacon",
   "observer": "sta1",
   "nodes": {
-    "apA":  {"role": "ap",      "ip": "10.0.0.11", "iface": "wlan0", "mac": "02:00:00:00:00:11", "ssid": "cosrA"},
-    "apB":  {"role": "ap",      "ip": "10.0.0.12", "iface": "wlan0", "mac": "02:00:00:00:00:12", "ssid": "cosrB"},
-    "sta1": {"role": "station", "ip": "10.0.0.21", "iface": "wlan0", "station_id": 1},
-    "sta2": {"role": "station", "ip": "10.0.0.22", "iface": "wlan0", "station_id": 2}
+    "apA": {
+      "role": "ap",
+      "ip": "10.0.0.11",
+      "iface": "wlan0",
+      "mac": "02:00:00:00:00:11",
+      "ssid": "cosrA"
+    },
+    "apB": {
+      "role": "ap",
+      "ip": "10.0.0.12",
+      "iface": "wlan0",
+      "mac": "02:00:00:00:00:12",
+      "ssid": "cosrB"
+    },
+    "sta1": {
+      "role": "station",
+      "ip": "10.0.0.21",
+      "iface": "wlan0",
+      "station_id": 1
+    },
+    "sta2": {
+      "role": "station",
+      "ip": "10.0.0.22",
+      "iface": "wlan0",
+      "station_id": 2
+    }
   }
 }

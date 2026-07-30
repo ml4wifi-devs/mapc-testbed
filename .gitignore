@@ -217,7 +217,14 @@ __marimo__/
 # Streamlit
 .streamlit/secrets.toml
 
-# captures / scratch
+# Captures
 *.pcap
 *.pcapng
+!tests/fixtures/*.pcap
+
+# Local testbed state
 offset.json
+topo.json
+experiment.json
+internal/
+results/

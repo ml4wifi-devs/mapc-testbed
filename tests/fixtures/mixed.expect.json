@@ -1,0 +1,606 @@
+{
+ "source": "ab.pcap",
+ "select": "all",
+ "frames": [
+  {
+   "frame": 1,
+   "radiotap_len": 24,
+   "mactime": 2916708401,
+   "signal_dbm": -83,
+   "freq_mhz": 2412,
+   "fc_type": 0,
+   "fc_subtype": 8,
+   "sa": "3c:ff:d8:48:01:40"
+  },
+  {
+   "frame": 2,
+   "radiotap_len": 24,
+   "mactime": 2916716624,
+   "signal_dbm": -58,
+   "freq_mhz": 2412,
+   "fc_type": 0,
+   "fc_subtype": 8,
+   "sa": "24:ec:99:95:22:2f"
+  },
+  {
+   "frame": 3,
+   "radiotap_len": 24,
+   "mactime": 2916722840,
+   "signal_dbm": -60,
+   "freq_mhz": 2412,
+   "fc_type": 0,
+   "fc_subtype": 8,
+   "sa": "24:ec:99:a7:3e:74"
+  },
+  {
+   "frame": 4,
+   "radiotap_len": 24,
+   "mactime": 2916794940,
+   "signal_dbm": -78,
+   "freq_mhz": 2412,
+   "fc_type": 0,
+   "fc_subtype": 8,
+   "sa": "8a:e0:56:74:aa:1c"
+  },
+  {
+   "frame": 5,
+   "radiotap_len": 24,
+   "mactime": 2916810743,
+   "signal_dbm": -83,
+   "freq_mhz": 2412,
+   "fc_type": 0,
+   "fc_subtype": 8,
+   "sa": "3c:ff:d8:48:01:40"
+  },
+  {
+   "frame": 6,
+   "radiotap_len": 24,
+   "mactime": 2916819109,
+   "signal_dbm": -58,
+   "freq_mhz": 2412,
+   "fc_type": 0,
+   "fc_subtype": 8,
+   "sa": "24:ec:99:95:22:2f"
+  },
+  {
+   "frame": 7,
+   "radiotap_len": 24,
+   "mactime": 2916825239,
+   "signal_dbm": -60,
+   "freq_mhz": 2412,
+   "fc_type": 0,
+   "fc_subtype": 8,
+   "sa": "24:ec:99:a7:3e:74"
+  },
+  {
+   "frame": 8,
+   "radiotap_len": 24,
+   "mactime": 2916897839,
+   "signal_dbm": -80,
+   "freq_mhz": 2412,
+   "fc_type": 0,
+   "fc_subtype": 8,
+   "sa": "8a:e0:56:74:aa:1c"
+  },
+  {
+   "frame": 9,
+   "radiotap_len": 24,
+   "mactime": 2916913137,
+   "signal_dbm": -84,
+   "freq_mhz": 2412,
+   "fc_type": 0,
+   "fc_subtype": 8,
+   "sa": "3c:ff:d8:48:01:40"
+  },
+  {
+   "frame": 10,
+   "radiotap_len": 24,
+   "mactime": 2916921422,
+   "signal_dbm": -58,
+   "freq_mhz": 2412,
+   "fc_type": 0,
+   "fc_subtype": 8,
+   "sa": "24:ec:99:95:22:2f"
+  },
+  {
+   "frame": 11,
+   "radiotap_len": 24,
+   "mactime": 2916927638,
+   "signal_dbm": -58,
+   "freq_mhz": 2412,
+   "fc_type": 0,
+   "fc_subtype": 8,
+   "sa": "24:ec:99:a7:3e:74"
+  },
+  {
+   "frame": 12,
+   "radiotap_len": 24,
+   "mactime": 2917000290,
+   "signal_dbm": -78,
+   "freq_mhz": 2412,
+   "fc_type": 0,
+   "fc_subtype": 8,
+   "sa": "8a:e0:56:74:aa:1c"
+  },
+  {
+   "frame": 13,
+   "radiotap_len": 24,
+   "mactime": 2917015550,
+   "signal_dbm": -85,
+   "freq_mhz": 2412,
+   "fc_type": 0,
+   "fc_subtype": 8,
+   "sa": "3c:ff:d8:48:01:40"
+  },
+  {
+   "frame": 14,
+   "radiotap_len": 24,
+   "mactime": 2917023821,
+   "signal_dbm": -58,
+   "freq_mhz": 2412,
+   "fc_type": 0,
+   "fc_subtype": 8,
+   "sa": "24:ec:99:95:22:2f"
+  },
+  {
+   "frame": 15,
+   "radiotap_len": 24,
+   "mactime": 2917030038,
+   "signal_dbm": -60,
+   "freq_mhz": 2412,
+   "fc_type": 0,
+   "fc_subtype": 8,
+   "sa": "24:ec:99:a7:3e:74"
+  },
+  {
+   "frame": 16,
+   "radiotap_len": 24,
+   "mactime": 2917117982,
+   "signal_dbm": -83,
+   "freq_mhz": 2412,
+   "fc_type": 0,
+   "fc_subtype": 8,
+   "sa": "3c:ff:d8:48:01:40"
+  },
+  {
+   "frame": 17,
+   "radiotap_len": 24,
+   "mactime": 2917126220,
+   "signal_dbm": -58,
+   "freq_mhz": 2412,
+   "fc_type": 0,
+   "fc_subtype": 8,
+   "sa": "24:ec:99:95:22:2f"
+  },
+  {
+   "frame": 18,
+   "radiotap_len": 24,
+   "mactime": 2917132452,
+   "signal_dbm": -60,
+   "freq_mhz": 2412,
+   "fc_type": 0,
+   "fc_subtype": 8,
+   "sa": "24:ec:99:a7:3e:74"
+  },
+  {
+   "frame": 19,
+   "radiotap_len": 24,
+   "mactime": 2917205067,
+   "signal_dbm": -80,
+   "freq_mhz": 2412,
+   "fc_type": 0,
+   "fc_subtype": 8,
+   "sa": "8a:e0:56:74:aa:1c"
+  },
+  {
+   "frame": 20,
+   "radiotap_len": 24,
+   "mactime": 2917217316,
+   "signal_dbm": -82,
+   "freq_mhz": 2412,
+   "fc_type": 0,
+   "fc_subtype": 8,
+   "sa": "e0:0c:e5:16:36:ac"
+  },
+  {
+   "frame": 21,
+   "radiotap_len": 24,
+   "mactime": 2917220363,
+   "signal_dbm": -83,
+   "freq_mhz": 2412,
+   "fc_type": 0,
+   "fc_subtype": 8,
+   "sa": "3c:ff:d8:48:01:40"
+  },
+  {
+   "frame": 22,
+   "radiotap_len": 24,
+   "mactime": 2917228618,
+   "signal_dbm": -58,
+   "freq_mhz": 2412,
+   "fc_type": 0,
+   "fc_subtype": 8,
+   "sa": "24:ec:99:95:22:2f"
+  },
+  {
+   "frame": 23,
+   "radiotap_len": 24,
+   "mactime": 2917234836,
+   "signal_dbm": -60,
+   "freq_mhz": 2412,
+   "fc_type": 0,
+   "fc_subtype": 8,
+   "sa": "24:ec:99:a7:3e:74"
+  },
+  {
+   "frame": 24,
+   "radiotap_len": 24,
+   "mactime": 2917306974,
+   "signal_dbm": -80,
+   "freq_mhz": 2412,
+   "fc_type": 0,
+   "fc_subtype": 8,
+   "sa": "8a:e0:56:74:aa:1c"
+  },
+  {
+   "frame": 25,
+   "radiotap_len": 24,
+   "mactime": 2917322739,
+   "signal_dbm": -83,
+   "freq_mhz": 2412,
+   "fc_type": 0,
+   "fc_subtype": 8,
+   "sa": "3c:ff:d8:48:01:40"
+  },
+  {
+   "frame": 26,
+   "radiotap_len": 24,
+   "mactime": 2917331017,
+   "signal_dbm": -56,
+   "freq_mhz": 2412,
+   "fc_type": 0,
+   "fc_subtype": 8,
+   "sa": "24:ec:99:95:22:2f"
+  },
+  {
+   "frame": 27,
+   "radiotap_len": 24,
+   "mactime": 2917337235,
+   "signal_dbm": -60,
+   "freq_mhz": 2412,
+   "fc_type": 0,
+   "fc_subtype": 8,
+   "sa": "24:ec:99:a7:3e:74"
+  },
+  {
+   "frame": 28,
+   "radiotap_len": 24,
+   "mactime": 2917409328,
+   "signal_dbm": -79,
+   "freq_mhz": 2412,
+   "fc_type": 0,
+   "fc_subtype": 8,
+   "sa": "8a:e0:56:74:aa:1c"
+  },
+  {
+   "frame": 29,
+   "radiotap_len": 24,
+   "mactime": 2917425174,
+   "signal_dbm": -85,
+   "freq_mhz": 2412,
+   "fc_type": 0,
+   "fc_subtype": 8,
+   "sa": "3c:ff:d8:48:01:40"
+  },
+  {
+   "frame": 30,
+   "radiotap_len": 24,
+   "mactime": 2917433428,
+   "signal_dbm": -58,
+   "freq_mhz": 2412,
+   "fc_type": 0,
+   "fc_subtype": 8,
+   "sa": "24:ec:99:95:22:2f"
+  },
+  {
+   "frame": 31,
+   "radiotap_len": 24,
+   "mactime": 2917439634,
+   "signal_dbm": -60,
+   "freq_mhz": 2412,
+   "fc_type": 0,
+   "fc_subtype": 8,
+   "sa": "24:ec:99:a7:3e:74"
+  },
+  {
+   "frame": 32,
+   "radiotap_len": 24,
+   "mactime": 2917466413,
+   "signal_dbm": -88,
+   "freq_mhz": 2412,
+   "fc_type": 2,
+   "fc_subtype": 4,
+   "sa": "4c:b9:ea:5e:6f:68"
+  },
+  {
+   "frame": 33,
+   "radiotap_len": 24,
+   "mactime": 2917466494,
+   "signal_dbm": -81,
+   "freq_mhz": 2412,
+   "fc_type": 1,
+   "fc_subtype": 13,
+   "sa": null
+  },
+  {
+   "frame": 34,
+   "radiotap_len": 24,
+   "mactime": 2917511718,
+   "signal_dbm": -75,
+   "freq_mhz": 2412,
+   "fc_type": 0,
+   "fc_subtype": 8,
+   "sa": "8a:e0:56:74:aa:1c"
+  },
+  {
+   "frame": 35,
+   "radiotap_len": 24,
+   "mactime": 2917527522,
+   "signal_dbm": -84,
+   "freq_mhz": 2412,
+   "fc_type": 0,
+   "fc_subtype": 8,
+   "sa": "3c:ff:d8:48:01:40"
+  },
+  {
+   "frame": 36,
+   "radiotap_len": 24,
+   "mactime": 2917535815,
+   "signal_dbm": -58,
+   "freq_mhz": 2412,
+   "fc_type": 0,
+   "fc_subtype": 8,
+   "sa": "24:ec:99:95:22:2f"
+  },
+  {
+   "frame": 37,
+   "radiotap_len": 24,
+   "mactime": 2917542033,
+   "signal_dbm": -59,
+   "freq_mhz": 2412,
+   "fc_type": 0,
+   "fc_subtype": 8,
+   "sa": "24:ec:99:a7:3e:74"
+  },
+  {
+   "frame": 38,
+   "radiotap_len": 24,
+   "mactime": 2917614163,
+   "signal_dbm": -77,
+   "freq_mhz": 2412,
+   "fc_type": 0,
+   "fc_subtype": 8,
+   "sa": "8a:e0:56:74:aa:1c"
+  },
+  {
+   "frame": 39,
+   "radiotap_len": 24,
+   "mactime": 2917629940,
+   "signal_dbm": -83,
+   "freq_mhz": 2412,
+   "fc_type": 0,
+   "fc_subtype": 8,
+   "sa": "3c:ff:d8:48:01:40"
+  },
+  {
+   "frame": 40,
+   "radiotap_len": 24,
+   "mactime": 2917638214,
+   "signal_dbm": -58,
+   "freq_mhz": 2412,
+   "fc_type": 0,
+   "fc_subtype": 8,
+   "sa": "24:ec:99:95:22:2f"
+  },
+  {
+   "frame": 41,
+   "radiotap_len": 24,
+   "mactime": 2917644432,
+   "signal_dbm": -60,
+   "freq_mhz": 2412,
+   "fc_type": 0,
+   "fc_subtype": 8,
+   "sa": "24:ec:99:a7:3e:74"
+  },
+  {
+   "frame": 42,
+   "radiotap_len": 24,
+   "mactime": 2917716580,
+   "signal_dbm": -78,
+   "freq_mhz": 2412,
+   "fc_type": 0,
+   "fc_subtype": 8,
+   "sa": "8a:e0:56:74:aa:1c"
+  },
+  {
+   "frame": 43,
+   "radiotap_len": 24,
+   "mactime": 2917732372,
+   "signal_dbm": -82,
+   "freq_mhz": 2412,
+   "fc_type": 0,
+   "fc_subtype": 8,
+   "sa": "3c:ff:d8:48:01:40"
+  },
+  {
+   "frame": 44,
+   "radiotap_len": 24,
+   "mactime": 2917740734,
+   "signal_dbm": -58,
+   "freq_mhz": 2412,
+   "fc_type": 0,
+   "fc_subtype": 8,
+   "sa": "24:ec:99:95:22:2f"
+  },
+  {
+   "frame": 45,
+   "radiotap_len": 24,
+   "mactime": 2917746831,
+   "signal_dbm": -60,
+   "freq_mhz": 2412,
+   "fc_type": 0,
+   "fc_subtype": 8,
+   "sa": "24:ec:99:a7:3e:74"
+  },
+  {
+   "frame": 46,
+   "radiotap_len": 24,
+   "mactime": 2917818917,
+   "signal_dbm": -80,
+   "freq_mhz": 2412,
+   "fc_type": 0,
+   "fc_subtype": 8,
+   "sa": "8a:e0:56:74:aa:1c"
+  },
+  {
+   "frame": 47,
+   "radiotap_len": 24,
+   "mactime": 2917831707,
+   "signal_dbm": -82,
+   "freq_mhz": 2412,
+   "fc_type": 0,
+   "fc_subtype": 8,
+   "sa": "e0:0c:e5:16:36:ac"
+  },
+  {
+   "frame": 48,
+   "radiotap_len": 24,
+   "mactime": 2917834719,
+   "signal_dbm": -82,
+   "freq_mhz": 2412,
+   "fc_type": 0,
+   "fc_subtype": 8,
+   "sa": "3c:ff:d8:48:01:40"
+  },
+  {
+   "frame": 49,
+   "radiotap_len": 24,
+   "mactime": 2917843012,
+   "signal_dbm": -58,
+   "freq_mhz": 2412,
+   "fc_type": 0,
+   "fc_subtype": 8,
+   "sa": "24:ec:99:95:22:2f"
+  },
+  {
+   "frame": 50,
+   "radiotap_len": 24,
+   "mactime": 2917849261,
+   "signal_dbm": -59,
+   "freq_mhz": 2412,
+   "fc_type": 0,
+   "fc_subtype": 8,
+   "sa": "24:ec:99:a7:3e:74"
+  },
+  {
+   "frame": 51,
+   "radiotap_len": 24,
+   "mactime": 2917902126,
+   "signal_dbm": -77,
+   "freq_mhz": 2412,
+   "fc_type": 0,
+   "fc_subtype": 5,
+   "sa": "8a:e0:56:74:aa:1c"
+  },
+  {
+   "frame": 52,
+   "radiotap_len": 24,
+   "mactime": 2917906535,
+   "signal_dbm": -77,
+   "freq_mhz": 2412,
+   "fc_type": 0,
+   "fc_subtype": 5,
+   "sa": "8a:e0:56:74:aa:1c"
+  },
+  {
+   "frame": 53,
+   "radiotap_len": 24,
+   "mactime": 2917921380,
+   "signal_dbm": -74,
+   "freq_mhz": 2412,
+   "fc_type": 0,
+   "fc_subtype": 8,
+   "sa": "8a:e0:56:74:aa:1c"
+  },
+  {
+   "frame": 54,
+   "radiotap_len": 24,
+   "mactime": 2917937185,
+   "signal_dbm": -84,
+   "freq_mhz": 2412,
+   "fc_type": 0,
+   "fc_subtype": 8,
+   "sa": "3c:ff:d8:48:01:40"
+  },
+  {
+   "frame": 55,
+   "radiotap_len": 24,
+   "mactime": 2917945411,
+   "signal_dbm": -58,
+   "freq_mhz": 2412,
+   "fc_type": 0,
+   "fc_subtype": 8,
+   "sa": "24:ec:99:95:22:2f"
+  },
+  {
+   "frame": 56,
+   "radiotap_len": 24,
+   "mactime": 2917951629,
+   "signal_dbm": -60,
+   "freq_mhz": 2412,
+   "fc_type": 0,
+   "fc_subtype": 8,
+   "sa": "24:ec:99:a7:3e:74"
+  },
+  {
+   "frame": 57,
+   "radiotap_len": 24,
+   "mactime": 2918023780,
+   "signal_dbm": -78,
+   "freq_mhz": 2412,
+   "fc_type": 0,
+   "fc_subtype": 8,
+   "sa": "8a:e0:56:74:aa:1c"
+  },
+  {
+   "frame": 58,
+   "radiotap_len": 24,
+   "mactime": 2918039518,
+   "signal_dbm": -84,
+   "freq_mhz": 2412,
+   "fc_type": 0,
+   "fc_subtype": 8,
+   "sa": "3c:ff:d8:48:01:40"
+  },
+  {
+   "frame": 59,
+   "radiotap_len": 24,
+   "mactime": 2918047947,
+   "signal_dbm": -53,
+   "freq_mhz": 2412,
+   "fc_type": 0,
+   "fc_subtype": 8,
+   "sa": "24:ec:99:95:22:2f"
+  },
+  {
+   "frame": 60,
+   "radiotap_len": 24,
+   "mactime": 2918054028,
+   "signal_dbm": -60,
+   "freq_mhz": 2412,
+   "fc_type": 0,
+   "fc_subtype": 8,
+   "sa": "24:ec:99:a7:3e:74"
+  }
+ ]
+}
