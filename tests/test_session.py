@@ -521,6 +521,27 @@ class TestDoctor(unittest.TestCase):
         self.assertAlmostEqual(self._stage(r, "divergence")["numbers"]["worst_us_per_shot"],
                                2.0, places=3)
 
+    def test_divergence_is_per_shot_even_when_only_some_shots_pair(self):
+        """A rate is per shot, so shots that were never heard still have to count as elapsed.
+
+        Only shots both transmitters were heard on can be compared. Numbering those 0, 1, 2 ...
+        would measure the separation per *paired* shot while reporting it as per shot, so a link
+        heard half the time would read at twice its real rate -- and the thinner the pairing, the
+        further off it reads, which is exactly when the number is worth having.
+        """
+        plan = timing_plan()
+        sess, _bus = make_session(
+            plan,
+            aps={"apA": fake_ap("apA", AP1), "apB": fake_ap("apB", AP2)},
+            stations={"sta1": timing_station(
+                "sta1", {AP1: lambda i: 1000000 + i * 15000,
+                         # heard on every other shot, drifting 2 us for each shot that passes
+                         AP2: lambda i: (1000000 + i * 15000 + 50000 + 2 * i
+                                         if i % 2 == 0 else None)})})
+        r = sess.doctor(repeats=10, settle_s=0)
+        self.assertAlmostEqual(self._stage(r, "divergence")["numbers"]["worst_us_per_shot"],
+                               2.0, places=3)
+
     def test_a_relation_that_does_not_hold_twice_fails_stability(self):
         sess, _bus = self._healthy(per_batch=lambda b: 0 if b <= 1 else 30)
         r = sess.doctor(repeats=10, settle_s=0)
@@ -1111,4 +1132,59 @@ class TestDoctorStagger(unittest.TestCase):
         for st in seen:
             self.assertLess(st, 50000)
             self.assertGreaterEqual(st, 2000)
+
+    def test_the_last_transmitter_is_kept_inside_the_slot(self):
+        """Transmitter i fires i staggers late, so it is the last one that has to fit.
+
+        A step small enough to look harmless on its own still walks the far transmitters into the
+        following shot once there are enough of them: they collide there, pair on almost nothing,
+        and the check reports them as unheard rather than as spaced too widely to begin with.
+        """
+        seen = []
+        names = ["ap%d" % i for i in range(1, 7)]
+        macs = dict((n, "02:00:00:00:00:%02x" % i) for i, n in enumerate(names, start=1))
+        nodes = dict((n, {"role": "ap", "ip": "10.0.0.%d" % (30 + i), "iface": "wlan0",
+                          "mac": macs[n]}) for i, n in enumerate(names))
+        nodes["sta1"] = {"role": "station", "ip": "10.0.0.21", "iface": "wlan0",
+                         "station_id": 1}
+        shot = {"nframes": 1, "frame_len": 200, "repeats": 4, "spacing_us": 50000,
+                "lead_us": 150000,
+                "links": [{"ap": n, "station": "sta1", "mcs": 4, "txpower_dbm": 20}
+                          for n in names]}
+        plan = T.resolve({"channel": 1, "observer": "sta1", "nodes": nodes}, shot)
+
+        # `ready_clock` relates only the two APs of the default fixture, so a plan this size
+        # needs every transmitter tied back to the reference or the check stops before it gets
+        # anywhere near the stagger.
+        ref = plan["reference_mac"]
+        cd = clockd_mod.ClockD(ref)
+        air = cg.ppdu_airtime_us(0, 124)
+        for other in [m for m in macs.values() if m != ref]:
+            for i in range(30):
+                t = 1000000000 + i * 100000
+                cd.observe_peer_beacon(ref, other, t1=int(t * 1.000002 + 1e6),
+                                       t2=int(t + air), rate_idx=0, length=124)
+                cd.observe_peer_beacon(other, ref, t1=int(t),
+                                       t2=int(t * 1.000002 + 1e6 + air), rate_idx=0, length=124)
+
+        bus = FakeBus()
+        sess = S.Session(plan, client=bus, clockd=cd)
+        sess.connect()
+        bus.responders = dict((n, fake_ap(n, macs[n])) for n in names)
+        bus.responders["sta1"] = fake_station("sta1", dict((macs[n], 1) for n in names))
+        real = sess._timing_round
+
+        def spy(repeats, stagger_us, spacing_us, nframes=1):
+            seen.append(stagger_us)
+            return real(repeats, stagger_us, spacing_us, nframes)
+
+        sess._timing_round = spy
+        sess.doctor(repeats=2, stagger_us=12500, settle_s=0.0)
+        self.assertTrue(seen, "the timing round was never attempted")
+        for st in seen:
+            for k in range(1, len(names)):
+                phase = (k * st) % 50000
+                self.assertGreaterEqual(
+                    min(phase, 50000 - phase), 2000,
+                    "transmitters %d apart land on each other at a stagger of %d" % (k, st))
 

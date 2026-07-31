@@ -650,10 +650,16 @@ class Session(object):
             return self._verdict(out)
 
         spacing_now = int(spacing_us if spacing_us is not None else self.plan["spacing_us"])
-        if spacing_now > 0:
-            phase = stagger_us % spacing_now
-            if min(phase, spacing_now - phase) < COLLIDE_GUARD_US:
-                stagger_us = max(COLLIDE_GUARD_US, spacing_now // 4)
+        movers = len(self.plan["aps"])
+        if spacing_now > 0 and movers > 1:
+            def clears(step):
+                for k in range(1, movers):
+                    phase = (k * step) % spacing_now
+                    if min(phase, spacing_now - phase) < COLLIDE_GUARD_US:
+                        return False
+                return True
+            if not clears(stagger_us):
+                stagger_us = max(COLLIDE_GUARD_US, spacing_now // movers)
 
         rounds = []
         for i in range(2):
@@ -702,14 +708,15 @@ class Session(object):
                         selfnoise[ap["name"]] = r["residual_median_us"]
 
         summaries = []
-        for times, _f, _t, _s, _n, _sp in rounds:
+        for times, _f, _t, seq0, _n, _sp in rounds:
             ref_name = self.plan["aps"][0]["name"]
+            base = wire.SeqAllocator.wire(seq0)
             per_ap = {}
             for i, ap in enumerate(self.plan["aps"][1:], start=1):
                 errs, common = timing.pairwise_errors(times.get(ref_name, {}),
                                                       times.get(ap["name"], {}), stagger_us, i)
-                per_ap[ap["name"]] = timing.stats(errs, len(common),
-                                                  positions=range(len(common)))
+                positions = [(s - base) % wire.SEQ_WIRE_MODULUS for s in common]
+                per_ap[ap["name"]] = timing.stats(errs, len(common), positions=positions)
             summaries.append(per_ap)
 
         # No arrival times at all is the receiver; arrival times that do not pair is the link.
