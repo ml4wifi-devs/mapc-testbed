@@ -81,14 +81,7 @@ class Deployer(object):
     # ---------------------------------------------------------------- lifecycle
 
     def nodes(self):
-        """Every node this deployment needs an agent on."""
-        want = set()
-        for ap in self.plan["aps"]:
-            want.add(ap["name"])
-            want.add(ap["station"]["name"])
-        want.add(self.plan["observer"]["name"])
-        want.update(self.plan.get("monitors") or [])
-        return [n for n in self.plan["nodes"] if n["name"] in want]
+        return [n for n in self.plan["nodes"] if n.get("ip")]
 
     def push(self, node):
         # Delivered as one archive to a path the login user owns, then unpacked as root. A

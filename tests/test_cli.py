@@ -127,31 +127,31 @@ class TestReporting(unittest.TestCase):
         """A script that runs this before an experiment must be able to stop on the result."""
         rep = {"verdict": "FAIL", "stages": [{"stage": "fire", "verdict": "FAIL",
                                               "detail": "refused"}]}
-        C._session = lambda plan: FakeSession(report=rep)
+        C._session = lambda plan, **kw: FakeSession(report=rep)
         out = Out()
         self.assertEqual(C.cmd_doctor(self._plan(), out), 1)
         self.assertIn("FAIL", out.text())
 
     def test_an_inconclusive_check_is_not_reported_as_success(self):
         rep = {"verdict": "INCONCLUSIVE", "stages": []}
-        C._session = lambda plan: FakeSession(report=rep)
+        C._session = lambda plan, **kw: FakeSession(report=rep)
         self.assertEqual(C.cmd_doctor(self._plan(), Out()), 1)
 
     def test_a_passing_check_succeeds(self):
         rep = {"verdict": "PASS", "stages": []}
-        C._session = lambda plan: FakeSession(report=rep)
+        C._session = lambda plan, **kw: FakeSession(report=rep)
         self.assertEqual(C.cmd_doctor(self._plan(), Out()), 0)
 
     def test_the_session_is_closed_even_when_a_command_fails(self):
         sess = FakeSession(report={"verdict": "PASS", "stages": []})
-        C._session = lambda plan: sess
+        C._session = lambda plan, **kw: sess
         C.cmd_doctor(self._plan(), Out())
         self.assertTrue(sess.closed)
 
     def test_levels_between_transmitters_come_with_every_round(self):
         """They are read from beacons already being reported, so there is no round to save by
         leaving them out and no second verb that could disagree with the first."""
-        C._session = lambda plan: FakeSession(shot=a_round())
+        C._session = lambda plan, **kw: FakeSession(shot=a_round())
         out = Out()
         C.cmd_run(self._plan(), out)
         self.assertIn("-62.0 dBm", out.text())
@@ -171,7 +171,7 @@ class TestCalibrate(unittest.TestCase):
             def run(self, spacing_us=None, **kw):
                 return a_round(1.0 if spacing_us >= 25000 else 0.4)
 
-        C._session = lambda plan: Sweep()
+        C._session = lambda plan, **kw: Sweep()
         out = Out()
         self.assertEqual(C.cmd_calibrate(self._plan(), out, repeats=1), 0)
         self.assertIn("stayed there above: 25000 us", out.text())
@@ -183,7 +183,7 @@ class TestCalibrate(unittest.TestCase):
             def run(self, spacing_us=None, **kw):
                 return a_round(0.4 if spacing_us == 10000 else 1.0)
 
-        C._session = lambda plan: Fluke()
+        C._session = lambda plan, **kw: Fluke()
         out = Out()
         self.assertEqual(C.cmd_calibrate(self._plan(), out, repeats=1), 0)
         self.assertIn("stayed there above: 15000 us", out.text())
@@ -198,7 +198,7 @@ class TestCalibrate(unittest.TestCase):
                 state["n"] += 1
                 return a_round(1.0 if state["n"] % 2 else 0.3)
 
-        C._session = lambda plan: Flaky()
+        C._session = lambda plan, **kw: Flaky()
         out = Out()
         self.assertEqual(C.cmd_calibrate(self._plan(), out, repeats=2), 1)
 
@@ -208,7 +208,7 @@ class TestCalibrate(unittest.TestCase):
             def run(self, spacing_us=None, **kw):
                 return a_round(0.2)
 
-        C._session = lambda plan: Never()
+        C._session = lambda plan, **kw: Never()
         out = Out()
         self.assertEqual(C.cmd_calibrate(self._plan(), out, repeats=1), 1)
         self.assertIn("unrelated to spacing", out.text())
@@ -220,7 +220,7 @@ class TestCalibrate(unittest.TestCase):
             def run(self, spacing_us=None, **kw):
                 return a_round(0.90 if spacing_us >= 15000 else 0.60)
 
-        C._session = lambda plan: Ceiling()
+        C._session = lambda plan, **kw: Ceiling()
         out = Out()
         self.assertEqual(C.cmd_calibrate(self._plan(), out, repeats=1), 0)
         self.assertIn("stayed there above: 15000 us", out.text())
@@ -248,7 +248,7 @@ class TestReset(unittest.TestCase):
             def participants(self):
                 return [("ap", "apA"), ("station", "sta1")]
 
-        C._session = lambda plan: Sess()
+        C._session = lambda plan, **kw: Sess()
         out = Out()
         self.assertEqual(C.cmd_reset(self._plan(), out), 0)
         self.assertEqual([op for _s, op in asked], ["reset", "reset"])
@@ -262,7 +262,7 @@ class TestReset(unittest.TestCase):
             def participants(self):
                 return [("ap", "apA")]
 
-        C._session = lambda plan: Sess()
+        C._session = lambda plan, **kw: Sess()
         out = Out()
         C.cmd_reset(self._plan(), out)
         self.assertIn("radio busy", out.text())

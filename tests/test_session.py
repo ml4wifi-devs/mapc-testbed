@@ -1083,3 +1083,32 @@ class TestLevelsExpire(unittest.TestCase):
         levels.add("aa", "bb", -70)
         self.assertEqual(levels.levels(), {("aa", "bb"): -70.0},
                          "only the readings still inside the window count")
+
+
+class TestDoctorStagger(unittest.TestCase):
+    """The separation between transmitters must stay inside one shot's slot."""
+
+    def test_a_stagger_at_or_above_the_spacing_is_reduced(self):
+        """At exactly the spacing, one transmitter's shot lands on the next shot of the other:
+        they collide, nothing decodes, and the check would report that nothing paired while the
+        clocks were fine."""
+        seen = []
+        plan = make_plan()
+        plan["spacing_us"] = 50000
+        sess, _bus = make_session(plan=plan,
+                                  aps={"apA": fake_ap("apA", AP1), "apB": fake_ap("apB", AP2)},
+                                  stations={"sta1": fake_station("sta1", {AP1: 1}),
+                                            "sta2": fake_station("sta2", {AP2: 1})})
+        real = sess._timing_round
+
+        def spy(repeats, stagger_us, spacing_us, nframes=1):
+            seen.append(stagger_us)
+            return real(repeats, stagger_us, spacing_us, nframes)
+
+        sess._timing_round = spy
+        sess.doctor(repeats=2, stagger_us=50000, settle_s=0.0)
+        self.assertTrue(seen, "the timing round was never attempted")
+        for st in seen:
+            self.assertLess(st, 50000)
+            self.assertGreaterEqual(st, 2000)
+

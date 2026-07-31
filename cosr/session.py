@@ -21,6 +21,7 @@ from . import radiotap
 from . import wire
 
 COLLECT_MARGIN_S = 2.0      # allowance on top of a round's own duration before giving up
+COLLIDE_GUARD_US = 2000
 
 _RUN_SEQ = itertools.count(1)
 
@@ -648,6 +649,11 @@ class Session(object):
                                  res["repeats"], tolerance=refused_fraction)
             return self._verdict(out)
 
+        spacing_now = int(spacing_us if spacing_us is not None else self.plan["spacing_us"])
+        if spacing_now > 0:
+            phase = stagger_us % spacing_now
+            if min(phase, spacing_now - phase) < COLLIDE_GUARD_US:
+                stagger_us = max(COLLIDE_GUARD_US, spacing_now // 4)
 
         rounds = []
         for i in range(2):

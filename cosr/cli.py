@@ -66,10 +66,18 @@ def _deployer(plan):
     return deploy_mod.Deployer(plan, hub=hub_for(plan), token=plan.get("token"))
 
 
-def _session(plan):
+def _session(plan, need_clock=True):
+    """Connect, and by default wait until a round could actually be commanded.
+
+    `need_clock=False` is for the commands that exist to recover a testbed rather than measure on
+    one. Requiring a usable clock plane there would make them refuse in exactly the state they
+    are meant to repair -- a radio that has stopped hearing its peers has no path to the
+    reference, which is the condition `reset` is for.
+    """
     s = session_mod.Session(plan, hub=hub_for(plan), token=plan.get("token")).connect()
     s.wait_for_agents()
-    s.wait_for_clock()
+    if need_clock:
+        s.wait_for_clock()
     return s
 
 
@@ -137,7 +145,7 @@ def cmd_reset(plan, out):
     different arrangement of nodes, and to clear a radio that reported its command interface
     had failed.
     """
-    sess = _session(plan)
+    sess = _session(plan, need_clock=False)
     try:
         for role, name in sess.participants():
             resp = sess.client.request_json(proto.subj_rpc(role, name), {"op": "reset"},

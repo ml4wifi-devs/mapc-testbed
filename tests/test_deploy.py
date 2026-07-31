@@ -75,9 +75,17 @@ class TestDeploy(unittest.TestCase):
         rec = Recorder()
         return D.Deployer(plan(), hub="10.0.0.1", token="t", runner=rec), rec
 
-    def test_only_nodes_this_deployment_uses_are_touched(self):
+    def test_every_node_in_the_testbed_gets_an_agent(self):
+        """Not just the ones this round's links name.
+
+        The clock plane counts every AP as a participant so that a round using one transmitter
+        can still place its instant, and which station a round targets changes without
+        redeploying. An AP left without an agent publishes no observations and then shows up as
+        a clock the graph cannot reach, which reads as broken hardware rather than as a node
+        nobody deployed to.
+        """
         dep, _rec = self._dep()
-        self.assertEqual(sorted(n["name"] for n in dep.nodes()), ["apA", "sta1"])
+        self.assertEqual(sorted(n["name"] for n in dep.nodes()), ["apA", "spare", "sta1"])
 
     def test_the_old_agent_is_gone_before_the_new_one_starts(self):
         """Starting first and hoping the old one exits leaves two agents answering for one
