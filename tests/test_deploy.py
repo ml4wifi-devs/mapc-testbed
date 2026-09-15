@@ -50,7 +50,7 @@ class Recorder(object):
             return 0, self.hash + "\n", self.banner
         if "pgrep" in line:
             return (0, "1234\n", self.banner) if self.running else (0, "", self.banner)
-        if "pkill" in line:
+        if "pkill" in line and "hostapd" not in line:
             assert "[c]osr" in line, "a self-matching pattern would kill the carrying shell"
             if getattr(self, "ignores_term", False) and "-9" not in line:
                 return 0, "", self.banner       # a process that ignores the polite request
@@ -167,6 +167,34 @@ class TestDeploy(unittest.TestCase):
         dep.up()
         self.assertTrue(any("'pa'\\''ss'" in c for c in rec.calls),
                         "the password must reach sudo intact")
+
+
+class TestRadiosAreEnabledBeforeUse(unittest.TestCase):
+    """A soft rfkill block is the one failure that reports itself as something else."""
+
+    def _dep(self):
+        rec = Recorder()
+        rec.running = True          # so the wait for hostapd is satisfied straight away
+        return D.Deployer(plan(), hub="10.0.0.1", token="t", runner=rec), rec
+
+    def test_an_access_point_is_unblocked_before_the_interface_is_configured(self):
+        dep, rec = self._dep()
+        dep.bring_up_ap(dep.nodes()[0], 1, "cosr")
+        self.assertLess(rec.index_of("rfkill unblock"), rec.index_of("ip link set"),
+                        "unblocking after configuring leaves hostapd to fail obscurely")
+
+    def test_a_receiver_is_unblocked_before_it_is_put_into_monitor_mode(self):
+        dep, rec = self._dep()
+        station = [n for n in dep.nodes() if n["role"] != "ap"][0]
+        dep.bring_up_monitor(station, 1)
+        self.assertLess(rec.index_of("rfkill unblock"), rec.index_of("set type monitor"))
+
+    def test_a_node_without_rfkill_does_not_stop_the_run(self):
+        # Not every image ships the tool, and its absence is not a reason to refuse to measure.
+        dep, rec = self._dep()
+        rec.fail_on = "rfkill"
+        dep.bring_up_ap(dep.nodes()[0], 1, "cosr")
+        rec.index_of("hostapd -B")
 
 
 class TestStreamsAreKeptApart(unittest.TestCase):

@@ -178,7 +178,7 @@ index 732cb33..f825170 100755
  
  static a_int32_t ath_numrxbufs = -1;
  static a_int32_t ath_numrxdescs = -1;
-@@ -1913,6 +1915,217 @@ static void ath_constantjam(void *Context, A_UINT16 Command,
+@@ -1913,6 +1915,208 @@ static void ath_constantjam(void *Context, A_UINT16 Command,
  	wmi_cmd_rsp(sc->tgt_wmi_handle, Command, SeqNo, &cmd_resp, sizeof(cmd_resp));
  }
  
@@ -195,34 +195,27 @@ index 732cb33..f825170 100755
 + */
 +#define COSR_LEAD_MAX_US   600000   /* reject targets more than 600 ms ahead */
 +#define COSR_FINE_US       2000     /* final approach spun with IRQ off; coarse wait keeps IRQ on */
-+/* Bounds on the gate's spins, so a clock that stops cannot hang the target. Each pass reads the
-+ * clock, so these are far above what the longest legal wait (COSR_LEAD_MAX_US) needs and are
-+ * reached only when the clock is no longer advancing. */
-+#define COSR_SPIN_MAX       400000000u
-+#define COSR_DRAIN_SPIN_MAX  40000000u
++/* Deadline for the drain wait below, which polls the queue rather than the clock and so has no
++ * bound of its own. Above the longest aggregate the pool allows (~1.9 ms at MCS 0), far below the
++ * 2 s the driver waits for a reply. */
++#define COSR_DRAIN_MAX_US   50000
 +
 +extern void ath_tgt_txqaddbuf(struct ath_softc_tgt *sc, struct ath_txq *txq,
 +			      struct ath_tx_buf *bf, struct ath_tx_desc *lastds);
 +
 +/* Spin until the on-chip clock reaches `deadline`. 0 on arrival, -1 if the clock stopped
-+ * advancing or moved backwards.
++ * moved backwards.
 + *
-+ * An unbounded spin here is not a slow path, it is a dead target: two of the callers run with
-+ * interrupts disabled, so USB stops being serviced and the device leaves the bus until it is
-+ * physically re-attached. A MAC reset or a restart of the BSS moves the clock backwards, which
-+ * makes the deadline unreachable, so the wait has to be able to give up. */
++ * A running clock ends this by itself. A MAC reset or a restart of the BSS does not: it moves the
++ * clock back, leaving the deadline hours away, and nothing is answered while this spins. */
 +static int cosr_wait_tsf(struct ath_hal *ah, a_uint64_t deadline)
 +{
 +	a_uint64_t now, prev;
-+	a_uint32_t spins;
 +
 +	prev = ah->ah_getTsf64(ah);
-+	spins = 0;
 +	while ((now = ah->ah_getTsf64(ah)) < deadline) {
 +		if (now < prev)
 +			return -1;              /* the clock was reset under us */
-+		if (++spins > COSR_SPIN_MAX)
-+			return -1;              /* it is no longer advancing */
 +		prev = now;
 +	}
 +	return 0;
@@ -236,11 +229,10 @@ index 732cb33..f825170 100755
 +	WMI_COSR_GATED_TX_CMD *cmd = (WMI_COSR_GATED_TX_CMD *)buffer;
 +	WMI_COSR_GATED_TX_RESP resp;
 +	struct ath_tx_buf *bf = NULL;
-+	a_uint64_t target, now;
++	a_uint64_t target, now, drain_deadline;
 +	a_uint16_t datalen, frame_len;
 +	a_uint32_t lo, hi;
 +	a_uint32_t saved_diag, saved_ifs[HAL_NUM_TX_QUEUES];
-+	a_uint32_t spins;
 +	int q;
 +	union { a_uint64_t u64; a_uint32_t u32[2]; } t;
 +	/* Fire on the VO (voice) QCU, not BE: highest DCU priority (wins medium
@@ -308,8 +300,7 @@ index 732cb33..f825170 100755
 +	 * Done here (not in the final approach) because ah_stopTxDma can block for up
 +	 * to a frame airtime waiting for the QCU to go idle; keeping it out of the
 +	 * 2 ms fine window avoids overrunning the target (~500 us late outliers). On
-+	 * an idle/dedicated VO queue this is ~free; under load it drops queued VO.
-+	 * (Real-traffic robustness wants a re-check just before fire -- see notes.) */
++	 * an idle/dedicated VO queue this is ~free; under load it drops queued VO. */
 +	ah->ah_stopTxDma(ah, txq->axq_qnum);
 +	ath_tx_draintxq(sc, txq);
 +
@@ -323,9 +314,9 @@ index 732cb33..f825170 100755
 +	}
 +
 +	/* on-chip busy-poll gate (skipped when ungated). Two phases so a large lead
-+	 * (hundreds of ms) is cheap: a coarse wait with interrupts ON (beacons keep
-+	 * flowing, HTC/USB keeps being serviced), then a short final approach with
-+	 * interrupts OFF so no ISR can delay the exit and fire the frame late. */
++	 * (hundreds of ms) is cheap: a coarse wait with MAC interrupts ON (beacons keep
++	 * flowing and receive keeps running), then a short final approach with them OFF
++	 * so no ISR can delay the exit and fire the frame late. */
 +	if (target != 0) {
 +		/* coarse wait, interrupts ON, up to COSR_FINE_US before the target */
 +		if (cosr_wait_tsf(ah, target - COSR_FINE_US) != 0) {
@@ -367,9 +358,9 @@ index 732cb33..f825170 100755
 +		 * The queue reports when it has drained, which is exact. A fixed delay was not --
 +		 * an aggregate at a low rate is milliseconds of airtime, so a short constant
 +		 * restored the configuration mid-transmission. */
-+		spins = 0;
++		drain_deadline = target + COSR_DRAIN_MAX_US;
 +		while (ah->ah_numTxPending(ah, txq->axq_qnum) != 0) {
-+			if (++spins > COSR_DRAIN_SPIN_MAX) {
++			if (ah->ah_getTsf64(ah) >= drain_deadline) {
 +				/* Restoring now is exactly what the wait exists to avoid, but
 +				 * holding carrier sense off indefinitely is worse. Say so, so the
 +				 * shot is not counted as a clean one. */
@@ -396,7 +387,7 @@ index 732cb33..f825170 100755
  static WMI_DISPATCH_ENTRY Magpie_Sys_DispatchEntries[] =
  {
  	{handle_echo_command,         WMI_ECHO_CMDID,               0},
-@@ -1953,6 +2166,7 @@ static WMI_DISPATCH_ENTRY Magpie_Sys_DispatchEntries[] =
+@@ -1953,6 +2157,7 @@ static WMI_DISPATCH_ENTRY Magpie_Sys_DispatchEntries[] =
  	{ath_reactivejam,             WMI_REACTIVEJAM_CMDID,        0},
  	{ath_fastreply,               WMI_FASTREPLY_CMDID,          0},
  	{ath_constantjam,             WMI_CONSTANTJAM_CMDID,        0},
@@ -569,10 +560,10 @@ index 690c115..7b04d04 100755
 +
 +enum COSR_GATED_TX_STATUS {
 +	COSR_GTX_FIRED = 0,   /* gated and fired at target */
-+	COSR_GTX_NOBF  = 1,   /* attack_build_packet failed (no tx buf / node) */
++	COSR_GTX_NOBF  = 1,   /* frame build failed: no tx buf, no node, or unknown rate code */
 +	COSR_GTX_LATE  = 2,   /* command arrived after target: not fired */
 +	COSR_GTX_TOOFAR = 3,  /* target too far ahead (> LEAD_MAX): not fired */
-+	COSR_GTX_CLKLOST = 4, /* the on-chip clock stopped or was reset while waiting */
++	COSR_GTX_CLKLOST = 4, /* the on-chip clock was reset while the gate was waiting */
 +	COSR_GTX_DRAIN = 5,   /* fired, but the queue never reported draining: the medium-access
 +			       * configuration was restored while the frame may still have been
 +			       * transmitting, so this shot is not trustworthy */
@@ -583,7 +574,7 @@ index 690c115..7b04d04 100755
 +	a_uint8_t status;
 +	/** low 32 bits of the commanded target TSF (echo, us) */
 +	a_uint32_t target_lo;
-+	/** hardware TX send timestamp from the TX descriptor (AP-clock us) */
++	/** deprecated: never filled by the firmware, always zero */
 +	a_uint32_t send_tsf;
 +} POSTPACK WMI_COSR_GATED_TX_RESP;
 +

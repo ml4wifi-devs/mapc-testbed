@@ -86,8 +86,10 @@ sudo apt-get install -y openssh-server hostapd
 ```bash
 cd ~/modwifi/drivers
 patch -p1 < /path/to/driver.diff
+make defconfig-ath9k-debug               # as upstream; the tarball ships no .config
 make
 sudo make install                        # -> /lib/modules/$(uname -r)/updates + depmod
+sudo reboot
 ```
 
 **Load the new firmware and driver.** The AR9271 downloads firmware into its RAM only on a USB

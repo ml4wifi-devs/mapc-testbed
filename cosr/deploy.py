@@ -156,6 +156,10 @@ class Deployer(object):
 
     # ---------------------------------------------------------------- radios
 
+    def _unblock(self, node):
+        """Clear a soft rfkill block; a fresh node often has one, and hostapd's error hides it."""
+        self._sudo(node, "rfkill unblock all 2>/dev/null; true", check=False)
+
     def bring_up_ap(self, node, channel, ssid):
         """Start the access point and make the transmit trigger writable.
 
@@ -168,6 +172,7 @@ class Deployer(object):
                 "ieee80211n=1\nwmm_enabled=1\nrequire_ht=1\nht_capab=[SHORT-GI-20]\n"
                 % (node["iface"], ssid, channel))
         self._sudo(node, "pkill hostapd 2>/dev/null; true", check=False)
+        self._unblock(node)
         self._sudo(node, "ip link set %s down" % node["iface"], check=False)
         self._send(node, conf.encode("utf-8"), "/tmp/hostapd.conf")
         self._sudo(node, "hostapd -B /tmp/hostapd.conf > /tmp/hostapd.log 2>&1 || true",
@@ -190,6 +195,7 @@ class Deployer(object):
     def bring_up_monitor(self, node, channel):
         """Put a receiver into monitor mode on the shot's channel."""
         iface = node["iface"]
+        self._unblock(node)
         self._sudo(node, "ip link set %s down" % iface)
         self._sudo(node, "iw dev %s set type monitor" % iface)
         self._sudo(node, "ip link set %s up" % iface)
