@@ -82,14 +82,14 @@ def validate_fire(msg):
     return msg
 
 
-def report_deadline_s(msg, margin_s=0.25):
+def report_deadline_s(msg, margin_s=0.1):
     """How long a receiver should wait before answering with what it has.
 
     Covers the lead, the whole firing sequence, and a margin for the last frame to arrive and be
     counted. Derived from the message so a receiver never needs to be told separately, and so it
     cannot disagree with the controller about when the round ended.
     """
-    return (msg["lead_us"] + msg["n"] * msg["spacing_us"]) / 1e6 + margin_s
+    return (msg["lead_us"] + (msg["n"] - 1) * msg["spacing_us"]) / 1e6 + margin_s
 
 
 _STATUS_FIELDS = ("v", "run", "batch", "ap", "epoch", "shots", "error")

@@ -170,7 +170,7 @@ class TestOnFire(unittest.TestCase):
         msg = fire_msg(n=4, expect={AP1: 999}, lead_us=0, spacing_us=0)
         t0 = time.time()
         rep = impl.on_fire(msg)
-        self.assertGreaterEqual(time.time() - t0, 0.2)
+        self.assertGreaterEqual(time.time() - t0, proto.report_deadline_s(msg))
         self.assertEqual(rep["per_ap"][AP1]["rx"], 15, "reports what it has, not nothing")
 
     def test_switches_run_namespace(self):
